@@ -1,0 +1,5 @@
+.idea
+testsnapshot
+snapshot
+example/testsnapshot
+example/log_*.log
