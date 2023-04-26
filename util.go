@@ -140,28 +140,6 @@ func overrideNotify[T any](ch chan T, v T) {
 	panic("race:channel was send concurrently")
 }
 
-type AtomicVal[T any] struct {
-	v atomic.Value
-}
-
-func NewAtomicVal[T any](val ...T) *AtomicVal[T] {
-	v := &AtomicVal[T]{}
-	if len(val) > 0 {
-		v.Store(val[0])
-	}
-	return v
-}
-func (a *AtomicVal[T]) Load() T {
-	val, ok := a.v.Load().(T)
-	if ok {
-		return val
-	}
-	return Zero[T]()
-}
-func (a *AtomicVal[T]) Store(t T) {
-	a.v.Store(t)
-}
-
 type Logger interface {
 	Infof(format string, v ...any)
 	Info(v ...any)
