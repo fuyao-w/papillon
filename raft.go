@@ -85,14 +85,14 @@ type (
 	}
 	// replication 领导人复制时每个跟随者维护的上下文状态
 	replication struct {
-		peer                                *LockItem[ServerInfo]                 // 跟随者的 server 信息
-		nextIndex                           uint64                                // 待复制给跟随者的下一条日志索引，初始化为领导人最新的日志索引
-		heartBeatStop, done, pipelineFinish chan struct{}                         // 心跳停止、复制线程结束、pipeline 返回结果处理线程结束
-		trigger                             chan *defaultDeferResponse            // 强制复制，不需要复制结果可以投递 nil
-		notifyCh                            chan struct{}                         // 强制心跳
-		stop                                chan bool                             // 复制停止通知，true 代表需要在停机前尽力复制
-		lastContact                         *LockItem[time.Time]                  // 上次与跟随者联系的时间，用于计算领导权
-		notify                              *LockItem[map[*verifyFuture]struct{}] // VerifyLeader 请求跟踪
+		peer                               *LockItem[ServerInfo]                 // 跟随者的 server 信息
+		nextIndex                          uint64                                // 待复制给跟随者的下一条日志索引，初始化为领导人最新的日志索引
+		heartBeatStop, heartBeatDone, done chan struct{}                         // 心跳停止、复制线程结束、pipeline 返回结果处理线程结束
+		trigger                            chan *defaultDeferResponse            // 强制复制，不需要复制结果可以投递 nil
+		notifyCh                           chan struct{}                         // 强制心跳
+		stop                               chan bool                             // 复制停止通知，true 代表需要在停机前尽力复制
+		lastContact                        *LockItem[time.Time]                  // 上次与跟随者联系的时间，用于计算领导权
+		notify                             *LockItem[map[*verifyFuture]struct{}] // VerifyLeader 请求跟踪
 	}
 )
 
@@ -999,9 +999,10 @@ func (r *Raft) setupLeaderState() {
 	}
 }
 func (r *Raft) stopReplication() {
-	for _, replication := range r.leaderState.replicate {
-		close(replication.stop)
-		<-replication.done
+	for _, repl := range r.leaderState.replicate {
+		repl.stop <- true // 尽力复制
+		close(repl.stop)
+		<-repl.done
 	}
 }
 
@@ -1054,7 +1055,10 @@ func (r *Raft) heartBeat(fr *replication) {
 	var (
 		ticker = time.NewTicker(Max(r.Conf().HeartbeatTimeout/10, minHeartBeatInterval))
 	)
-	defer ticker.Stop()
+	defer func() {
+		ticker.Stop()
+		close(fr.heartBeatDone)
+	}()
 	for {
 		select {
 		case <-fr.heartBeatStop:
@@ -1125,7 +1129,10 @@ func (r *Raft) replicateHelper(fr *replication) (stop bool) {
 	defer ticker.Stop()
 	for !stop {
 		select {
-		case <-fr.stop:
+		case shouldSend := <-fr.stop:
+			if shouldSend {
+				r.replicateTo(fr, r.getLatestIndex())
+			}
 			return true
 		case <-ticker.C:
 			stop = r.replicateTo(fr, r.getLatestIndex())
@@ -1146,10 +1153,11 @@ func (r *Raft) replicateHelper(fr *replication) (stop bool) {
 }
 
 // leaderLease 领导人线程通知自己下台
-func (r *Raft) leaderLease(term uint64) {
+func (r *Raft) leaderLease(term uint64, fr *replication) {
 	r.setFollower()
 	r.setCurrentTerm(term)
 	asyncNotify(r.leaderState.stepDown)
+	fr.notifyAll(false)
 }
 
 // sendLatestSnapshot 发送最新的快照
@@ -1178,15 +1186,11 @@ func (r *Raft) sendLatestSnapshot(fr *replication) error {
 	}
 	if resp.Term > r.getCurrentTerm() {
 
-		r.leaderLease(resp.Term)
+		r.leaderLease(resp.Term, fr)
 		return nil
 	}
 	fr.setLastContact()
-	if resp.Success {
-
-	} else {
-
-	}
+	fr.notifyAll(resp.Success)
 	return nil
 }
 
@@ -1227,7 +1231,7 @@ func (r *Raft) replicateTo(fr *replication, latestIndex uint64) (stop bool) {
 			return
 		}
 		if resp.Term > r.getCurrentTerm() {
-			r.leaderLease(resp.Term)
+			r.leaderLease(resp.Term, fr)
 			return true
 		}
 		fr.setLastContact()
@@ -1245,13 +1249,11 @@ func (r *Raft) replicateTo(fr *replication, latestIndex uint64) (stop bool) {
 }
 
 // processPipelineResult 处理 pipeline 的结果
-func (r *Raft) processPipelineResult(fr *replication, pipeline AppendEntryPipeline) {
-	defer close(fr.pipelineFinish)
+func (r *Raft) processPipelineResult(fr *replication, pipeline AppendEntryPipeline, finishCh, pipelineStopCh chan struct{}) {
+	defer close(pipelineStopCh)
 	for {
 		select {
-		case <-fr.done:
-			return
-		case <-fr.stop:
+		case <-finishCh:
 			return
 		case fu := <-pipeline.Consumer():
 			resp, err := fu.Response()
@@ -1260,7 +1262,7 @@ func (r *Raft) processPipelineResult(fr *replication, pipeline AppendEntryPipeli
 				continue
 			}
 			if resp.Term > r.getCurrentTerm() {
-				r.leaderLease(resp.Term)
+				r.leaderLease(resp.Term, fr)
 				return
 			}
 			fr.setLastContact()
@@ -1291,7 +1293,8 @@ func (r *Raft) pipelineReplicateTo(fr *replication, pipeline AppendEntryPipeline
 }
 func (r *Raft) pipelineReplicateHelper(fr *replication) (stop bool) {
 	var (
-		ticker = time.NewTicker(r.Conf().CommitTimeout)
+		ticker                   = time.NewTicker(r.Conf().CommitTimeout)
+		finishCh, pipelineStopCh = make(chan struct{}), make(chan struct{})
 	)
 	defer ticker.Stop()
 	pipeline, err := r.rpc.AppendEntryPipeline(Ptr(fr.peer.Get()))
@@ -1299,24 +1302,32 @@ func (r *Raft) pipelineReplicateHelper(fr *replication) (stop bool) {
 		return
 	}
 	r.goFunc(func() {
-		r.processPipelineResult(fr, pipeline)
+		r.processPipelineResult(fr, pipeline, finishCh, pipelineStopCh)
 	})
-END:
-	for {
+
+	for stop {
 		select {
-		case <-fr.stop:
-			stop = r.pipelineReplicateTo(fr, pipeline)
-			break END
+		case shouldSend := <-fr.stop:
+			if shouldSend {
+				r.pipelineReplicateTo(fr, pipeline)
+			}
+			stop = true
 		case <-ticker.C:
-		case <-fr.trigger:
-		}
-		if stop = r.pipelineReplicateTo(fr, pipeline); stop {
-			break END
+			stop = r.pipelineReplicateTo(fr, pipeline)
+		case fu := <-fr.trigger:
+			stop = r.pipelineReplicateTo(fr, pipeline)
+			if fu != nil {
+				if stop {
+					fu.fail(errors.New("replication failed"))
+				} else {
+					fu.success()
+				}
+			}
 		}
 	}
-	close(fr.done)
+	close(finishCh)
 	select {
-	case <-fr.pipelineFinish:
+	case <-pipelineStopCh:
 	case <-r.shutDown.C:
 	}
 	return
@@ -1324,10 +1335,12 @@ END:
 
 // replicate 复制到制定的跟随者，先短连接（可以发送快照），后长链接
 func (r *Raft) replicate(fr *replication) {
-	defer func() { close(fr.heartBeatStop) }()
 	for stop := r.replicateHelper(fr); !stop; stop = r.replicateHelper(fr) {
 		stop = r.pipelineReplicateHelper(fr)
 	}
+	close(fr.heartBeatStop)
+	<-fr.heartBeatDone
+	close(fr.done)
 }
 
 // reloadReplication 重新加载跟随者的复制、心跳线程
@@ -1351,16 +1364,15 @@ func (r *Raft) reloadReplication() {
 			continue
 		}
 		fr := &replication{
-			nextIndex:      index,
-			peer:           NewLockItem(server),
-			stop:           make(chan bool),
-			heartBeatStop:  make(chan struct{}),
-			notifyCh:       make(chan struct{}),
-			done:           make(chan struct{}),
-			pipelineFinish: make(chan struct{}),
-			trigger:        make(chan *defaultDeferResponse),
-			lastContact:    NewLockItem[time.Time](),
-			notify:         NewLockItem(map[*verifyFuture]struct{}{}),
+			nextIndex:     index,
+			peer:          NewLockItem(server),
+			stop:          make(chan bool),
+			heartBeatStop: make(chan struct{}),
+			notifyCh:      make(chan struct{}),
+			done:          make(chan struct{}),
+			trigger:       make(chan *defaultDeferResponse),
+			lastContact:   NewLockItem[time.Time](),
+			notify:        NewLockItem(map[*verifyFuture]struct{}{}),
 		}
 		r.leaderState.replicate[server.ID] = fr
 		r.goFunc(func() {
@@ -1387,6 +1399,13 @@ func (r *Raft) clearLeaderState() {
 	for e := r.leaderState.inflight.Front(); e != nil; e = e.Next() {
 		e.Value.(*LogFuture).fail(ErrNotLeader)
 		r.leaderState.inflight.Remove(e)
+	}
+	for _, repl := range r.leaderState.replicate {
+		repl.notify.Action(func(t *map[*verifyFuture]struct{}) {
+			for future := range *t {
+				future.fail(ErrLeadershipLost)
+			}
+		})
 	}
 	r.leaderState.inflight = nil
 	r.leaderState.replicate = nil
@@ -1608,6 +1627,7 @@ func (r *Raft) cycleLeader() {
 			r.processCommand(cmd)
 		case <-r.commitCh:
 			if stepDown := r.leaderCommit(); stepDown {
+				// TODO 更新 step down 策略
 				r.setShutDown()
 			}
 		case <-leaderLeaseTimeout:
