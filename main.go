@@ -1005,7 +1005,7 @@ func (r *Raft) broadcastReplicate() {
 // applyLog 想本地提交日志然后通知复制到跟随者
 func (r *Raft) applyLog(future ...*LogFuture) {
 	var (
-		index = r.getLatestIndex() + 1
+		index = r.getLatestIndex()
 		term  = r.getCurrentTerm()
 		logs  = make([]*LogEntry, 0, len(future))
 		now   = time.Now()
