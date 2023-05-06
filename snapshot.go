@@ -35,15 +35,11 @@ const (
 )
 
 func snapshotName(term, index uint64) string {
-	now := time.Now()
-	msec := now.UnixNano() / int64(time.Millisecond)
-	return fmt.Sprintf("%d-%d-%d", term, index, msec)
+	return fmt.Sprintf("%d-%d-%d", term, index, time.Now().UnixMilli())
 }
 
 // runSnapshot 快照线程
 func (r *Raft) runSnapshot() {
-	ticker := time.NewTicker(r.conf.Load().SnapshotInterval)
-	defer ticker.Stop()
 	for {
 		select {
 		case <-r.shutDown.C:
@@ -57,7 +53,7 @@ func (r *Raft) runSnapshot() {
 				fn = nil
 			}
 			fu.responded(fn, err)
-		case <-ticker.C:
+		case <-time.After(r.conf.Load().SnapshotInterval):
 			if !r.shouldBuildSnapshot() {
 				continue
 			}

@@ -69,8 +69,8 @@ type (
 )
 
 type (
-	// rpcType rpc 接口类型
-	rpcType uint64
+	// rpcType rpc 接口类型，因为要编码在 rpc 协议中，并且只占用一个 byte ，所以类型也需要是 byte 防止溢出
+	rpcType byte
 	// RPC rpc 请求的封装
 	RPC struct {
 		CmdType  rpcType

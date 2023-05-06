@@ -4,7 +4,7 @@ import "io"
 
 type FSM interface {
 	Apply(*LogEntry) interface{}
-	ReStore(reader io.ReadCloser) error
+	ReStore(reader io.ReadCloser) error // 从快照恢复，需要自行实现觅等
 	Snapshot() (FsmSnapshot, error)
 }
 
@@ -78,7 +78,7 @@ func (r *Raft) runFSM() {
 		}
 		snapshot, err := r.fsm.Snapshot()
 		if err != nil {
-			r.logger.Errorf("")
+			r.logger.Errorf("fsm generate snap shot err :%s", err)
 		}
 		fu.responded(&SnapShotFutureResp{
 			term:        lastAppliedTerm,
@@ -105,10 +105,10 @@ func (r *Raft) runFSM() {
 			}
 		case fu := <-r.fsmRestoreCh:
 			meta, err := r.recoverSnapshotByID(fu.ID)
-			lastAppliedIdx = meta.Index
-			lastAppliedTerm = meta.Term
+			if err == nil {
+				lastAppliedIdx, lastAppliedTerm = meta.Index, meta.Term
+			}
 			fu.responded(nil, err)
-
 		case fu := <-r.fsmSnapshotCh:
 			snapshot(fu)
 		}

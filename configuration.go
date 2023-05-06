@@ -31,6 +31,10 @@ func (c *cluster) Clone() cluster {
 	}
 }
 
+// stable 集群配置是否处在变更阶段
+func (c *cluster) stable() bool {
+	return c.commitIndex > 0 && c.latestIndex == c.commitIndex
+}
 func DecodeConfiguration(data []byte) (c Configuration) {
 	if err := json.Unmarshal(data, &c); err != nil {
 		panic(fmt.Errorf("failed to decode Configuration: %s ,%s", err, data))

@@ -48,7 +48,7 @@ func (r *Raft) BootstrapCluster(configuration Configuration) defaultFuture {
 	select {
 	case <-r.shutDown.C:
 		future.fail(ErrShutDown)
-	case r.commandCh <- &command{typ: commandBootstrap, item: future}:
+	case r.commandCh <- &command{enum: commandBootstrap, callback: future}:
 	}
 	return future
 }
@@ -77,11 +77,7 @@ func (r *Raft) apiApplyLog(entry *LogEntry, timeout time.Duration) ApplyFuture {
 	case <-r.shutDown.C:
 		return &errFuture[nilRespFuture]{ErrShutDown}
 	case r.apiLogApplyCh <- applyFuture: //batch apply
-		return applyFuture
-	case r.commandCh <- &command{ // 正常提交
-		typ:  commandLogApply,
-		item: applyFuture,
-	}:
+	case r.commandCh <- &command{enum: commandLogApply, callback: applyFuture}: // 正常提交
 	}
 	return applyFuture
 }
@@ -94,7 +90,7 @@ func (r *Raft) VerifyLeader() Future[bool] {
 	case <-r.shutDown.C:
 		vf.fail(ErrShutDown)
 		return &vf.deferResponse
-	case r.commandCh <- &command{typ: commandVerifyLeader, item: vf}:
+	case r.commandCh <- &command{enum: commandVerifyLeader, callback: vf}:
 		return &vf.deferResponse
 	}
 }
@@ -118,7 +114,7 @@ func (r *Raft) requestClusterChange(req configurationChangeRequest, timeout time
 		return &errFuture[nilRespFuture]{err: errors.New("apply log time out")}
 	case <-r.shutDown.C:
 		return &errFuture[nilRespFuture]{err: ErrShutDown}
-	case r.commandCh <- &command{typ: commandClusterChange, item: ccf}:
+	case r.commandCh <- &command{enum: commandClusterChange, callback: ccf}:
 		return ccf
 	}
 }
@@ -157,7 +153,8 @@ func (r *Raft) SnapShot() Future[OpenSnapShot] {
 	}
 }
 
-func (r *Raft) StateCh() <-chan State {
+// StateCh 状态变化的通知
+func (r *Raft) StateCh() <-chan *StateChange {
 	return r.stateChangeCh
 }
 
@@ -186,7 +183,7 @@ func (r *Raft) LeaderTransfer(id ServerID, address ServerAddr) defaultFuture {
 	}
 	future.init()
 	select {
-	case r.commandCh <- &command{typ: commandLeadershipTransfer, item: future}:
+	case r.commandCh <- &command{enum: commandLeadershipTransfer, callback: future}:
 		return future
 	case <-r.shutDown.C:
 		return &errFuture[nilRespFuture]{ErrShutDown}
@@ -211,11 +208,7 @@ func (r *Raft) ReloadConfig(rc ReloadableConfig) error {
 	select {
 	case <-r.shutDown.C:
 		return ErrShutDown
-	case r.commandCh <- &command{
-		typ:  commandConfigReload,
-		item: newConf,
-	}:
-
+	case r.commandCh <- &command{enum: commandConfigReload, callback: &newConf}:
 	}
 	return nil
 }
@@ -227,7 +220,7 @@ func (r *Raft) ReStoreSnapshot(meta *SnapShotMeta, reader io.ReadCloser) error {
 	}
 	fu.init()
 	select {
-	case r.commandCh <- &command{typ: commandSnapshotRestore, item: fu}:
+	case r.commandCh <- &command{enum: commandSnapshotRestore, callback: fu}:
 	case <-r.shutDown.C:
 		return ErrShutDown
 	}

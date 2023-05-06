@@ -11,29 +11,35 @@ import (
 )
 
 func TestRaft(t *testing.T) {
-	raft, rpc := buildRaft("1", nil, nil)
-	_ = rpc
-	_ = raft
+	raft1, rpc1 := buildRaft("1", nil, nil)
+	raft2, rpc2 := buildRaft("2", nil, nil)
+	raft3, rpc3 := buildRaft("3", nil, nil)
+	batchConn(rpc1.(*memRPC), rpc2.(*memRPC), rpc3.(*memRPC))
 	go func() {
 		time.Sleep(time.Second)
-		raft.BootstrapCluster(Configuration{Servers: []ServerInfo{{Voter, "1", "1"}}})
+		raft1.BootstrapCluster(Configuration{Servers: []ServerInfo{
+			{Voter, "1", "1"},
+			{Voter, "2", "2"},
+			{Voter, "3", "3"},
+		}})
 	}()
-	http.Handle("/get", &getHandle{raftList: []*Raft{raft}})
-	http.Handle("/set", &setHandle{raftList: []*Raft{raft}})
-	http.Handle("/verify", &verifyHandle{raft})
-	http.Handle("/config", &configGetHandle{raft})
-	http.Handle("/get_log", &getLogHandle{raftList: []*Raft{raft}})
-	http.Handle("/leader_transfer", &leaderTransferHandle{raftList: []*Raft{raft}})
-	http.Handle("/snapshot", &snapshotHandle{raftList: []*Raft{raft}})
-	http.Handle("/restore", &userRestoreSnapshotHandle{raftList: []*Raft{raft}})
-	http.Handle("/add_peer", &addPeerHandle{raftList: []*Raft{raft}})
+	raftList := []*Raft{raft1, raft2, raft3}
+	http.Handle("/get", &getHandle{raftList})
+	http.Handle("/set", &setHandle{raftList})
+	http.Handle("/verify", &verifyHandle{raftList})
+	http.Handle("/config", &configGetHandle{raft1})
+	http.Handle("/get_log", &getLogHandle{raftList})
+	http.Handle("/leader_transfer", &leaderTransferHandle{raftList})
+	http.Handle("/snapshot", &snapshotHandle{raftList})
+	http.Handle("/restore", &userRestoreSnapshotHandle{raftList})
+	http.Handle("/add_peer", &addPeerHandle{raftList})
 	http.ListenAndServe("localhost:8080", nil)
 }
 
 func buildRaft(localID string, rpc RpcInterface, store interface {
 	LogStore
 	KVStorage
-}) (*Raft, *memFSM) {
+}) (*Raft, RpcInterface) {
 
 	conf := &Config{
 		LocalID: localID,
@@ -66,7 +72,7 @@ func buildRaft(localID string, rpc RpcInterface, store interface {
 	if err != nil {
 		panic(err)
 	}
-	return raft, fsm
+	return raft, rpc
 }
 
 func getLeader(rafts ...*Raft) *Raft {
@@ -88,7 +94,7 @@ type (
 		raftList []*Raft
 	}
 	verifyHandle struct {
-		*Raft
+		raftList []*Raft
 	}
 	configGetHandle struct {
 		*Raft
@@ -148,7 +154,12 @@ func (s *setHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 
 }
 func (s *verifyHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
-	fu := s.Raft.VerifyLeader()
+	idx := cast.ToInt(request.URL.Query().Get("idx"))
+	if idx < 0 || idx >= len(s.raftList) {
+		writer.Write([]byte("param err"))
+		return
+	}
+	fu := s.raftList[idx].VerifyLeader()
 	_, err := fu.Response()
 
 	if err != nil {

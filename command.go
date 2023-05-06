@@ -10,19 +10,25 @@ import (
 )
 
 type (
-	commandTyp int
-	command    struct {
-		typ  commandTyp
-		item interface{}
+	reject interface {
+		reject(state State)
 	}
-	commandMap map[commandTyp]map[State]func(*Raft, interface{})
+
+	commandEnum int
+	command     struct {
+		enum     commandEnum
+		callback reject
+	}
+	commandMap map[commandEnum]map[State]func(*Raft, any)
 )
+
+// testFuture 测试用
 type testFuture struct {
 	deferResponse[string]
 }
 
 const (
-	commandTest commandTyp = iota + 1 // 用于单测
+	commandTest commandEnum = iota + 1 // 用于单测
 	commandClusterGet
 	commandBootstrap
 	commandLogApply
@@ -70,18 +76,53 @@ func init() {
 		},
 	}
 }
+func (d *deferResponse[_]) reject(state State) {
+	if state == ShutDown {
+		d.fail(ErrShutDown)
+		return
+	}
+	d.fail(fmt.Errorf("current state %s can't process", state.String()))
+}
 
+func (c *Config) reject(State) {}
+
+// processCommand 处理 raft 的命令，需要在 channelCommand 注册 commandEnum + 对应 State 的处理函数，
+// 如果该请求当前没有对应的 State 处理函数，则会强制转成 reject interface 执行拒绝回调
+// 如果未在 channelCommand 注册，则会直接 panic
 func (r *Raft) processCommand(cmd *command) {
-	cc, ok := channelCommand[cmd.typ]
+	cc, ok := channelCommand[cmd.enum]
 	if !ok {
-		panic(fmt.Sprintf("command type :%d not register", cmd.typ))
+		panic(fmt.Sprintf("command type :%d not register", cmd.enum))
 	}
 	state := r.state.Get()
 	f, ok := cc[state]
 	if ok {
-		f(r, cmd.item)
+		f(r, cmd.callback)
 	} else {
-		cmd.item.(reject).reject(state)
+		cmd.callback.reject(state)
+	}
+}
+
+// processHeartBeatTimeout 处理心跳超时判断，只在 cycleFollower 中调用！
+func (r *Raft) processHeartBeatTimeout(warn func(...interface{})) {
+	tm := r.Conf().HeartbeatTimeout
+	r.heartbeatTimeout = randomTimeout(tm)
+	if time.Now().Before(r.getLastContact().Add(tm)) {
+		return
+	}
+	oldLeaderInfo := r.leaderInfo.Get()
+	r.clearLeaderInfo() // 必须清掉，否则在投票时候选人会被拒绝
+	// 区分下不能开始选举的原因
+	switch {
+	case r.cluster.latestIndex == 0:
+		warn("no cluster members")
+	case r.cluster.stable() && !r.canVote(r.localInfo.ID):
+		warn("no part of stable Configuration, aborting election")
+	case r.canVote(r.localInfo.ID):
+		warn("heartbeat abortCh reached, starting election", "last-leader-addr", oldLeaderInfo.Addr, "last-leader-id", oldLeaderInfo.ID)
+		r.setCandidate()
+	default:
+		warn("heartbeat abortCh reached, not part of a stable Configuration or a non-voter, not triggering a leader election")
 	}
 }
 
@@ -115,7 +156,7 @@ BREAK:
 			break BREAK
 		}
 	}
-	r.applyLog(futures)
+	r.applyLog(futures...)
 }
 
 // processBootstrap 引导集群启动，节点必须是干净的（日志、快照、任期都是 0 ）
@@ -169,7 +210,7 @@ func (r *Raft) processSnapshotRestore(item interface{}) {
 		fu.fail(ErrLeadershipTransferInProgress)
 		return
 	}
-	if r.cluster.commitIndex != r.cluster.latestIndex {
+	if !r.cluster.stable() {
 		fu.fail(fmt.Errorf("cannot restore snapshot now, wait until the configuration entry at %v has been applied (have applied %v)",
 			r.cluster.latestIndex, r.cluster.commitIndex))
 		return
@@ -179,7 +220,8 @@ func (r *Raft) processSnapshotRestore(item interface{}) {
 		r.leaderState.inflight.Remove(e)
 	}
 	index := r.getLatestIndex() + 1
-	sink, err := r.snapshotStore.Create(SnapShotVersionDefault, index, r.getCurrentTerm(), r.cluster.latest, r.cluster.latestIndex, nil)
+	sink, err := r.snapshotStore.Create(SnapShotVersionDefault, index, r.getCurrentTerm(),
+		r.cluster.commit, r.cluster.commitIndex, r.rpc)
 	if err != nil {
 		fu.fail(err)
 		return
@@ -226,13 +268,12 @@ func (r *Raft) pickLatestPeer() *replication {
 	var (
 		latest      *replication
 		latestIndex uint64
-		rep         = r.leaderState.replicate
 	)
 	for _, info := range r.getLatestConfiguration() {
 		if !info.isVoter() {
 			continue
 		}
-		fr, ok := rep[info.ID]
+		fr, ok := r.leaderState.replicate[info.ID]
 		if !ok {
 			continue
 		}
@@ -241,7 +282,6 @@ func (r *Raft) pickLatestPeer() *replication {
 			latest = fr
 		}
 	}
-
 	return latest
 }
 
@@ -266,7 +306,7 @@ func (r *Raft) leadershipTransfer(fr *replication) error {
 			}
 		}
 	}
-	if i >= rounds {
+	if i > rounds {
 		return errors.New("reach the maximum number of catch-up rounds")
 	}
 	resp, err := r.rpc.FastTimeout(Ptr(fr.peer.Get()), &FastTimeoutRequest{
@@ -348,6 +388,7 @@ func (r *Raft) processVerifyLeader(item interface{}) {
 	fu.voteGranted = 0
 	fu.reportOnce = new(sync.Once)
 	fu.stepDown = r.leaderState.stepDown
+	// 先投自己一票
 	fu.vote(true)
 	for _, repl := range r.leaderState.replicate {
 		repl.observe(fu)
@@ -360,15 +401,15 @@ func (r *Raft) processClusterChange(item interface{}) {
 	var (
 		fu = item.(*configurationChangeFuture)
 	)
-	if r.cluster.commitIndex != r.cluster.latestIndex {
-		fu.fail(errors.New("no stable configuration"))
+	if !r.cluster.stable() {
+		fu.fail(errors.New("no stable cluster"))
 		return
 	}
 	if r.leaderState.getLeadershipTransfer() {
 		fu.fail(ErrLeadershipTransferInProgress)
 		return
 	}
-	if r.cluster.latestIndex != fu.req.pervIndex {
+	if fu.req.pervIndex > 0 && r.cluster.latestIndex != fu.req.pervIndex {
 		fu.fail(errors.New("configuration index not match"))
 		return
 	}
@@ -384,10 +425,9 @@ func (r *Raft) processClusterChange(item interface{}) {
 		},
 	}
 	logFu.init()
-	r.applyLog([]*LogFuture{logFu})
-
-	r.cluster.setLatest(logFu.Index(), newConfiguration)
+	r.applyLog(logFu)
+	r.setLatestConfiguration(logFu.Index(), newConfiguration)
 	r.onConfigurationUpdate()
 	r.reloadReplication()
-
+	fu.success()
 }

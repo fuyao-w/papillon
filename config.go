@@ -6,7 +6,8 @@ import (
 )
 
 const (
-	minCheckInterval = 10 * time.Millisecond
+	minCheckInterval     = 10 * time.Millisecond
+	minHeartBeatInterval = time.Millisecond * 10
 )
 
 type Config struct {
@@ -22,7 +23,9 @@ type Config struct {
 	Logger                  Logger
 	LocalID                 string
 	LeadershipCatchUpRounds uint
+	LeadershipLostShutDown  bool
 }
+
 type ReloadableConfig struct {
 	TrailingLogs      uint64
 	SnapshotInterval  time.Duration

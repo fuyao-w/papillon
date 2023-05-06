@@ -2,7 +2,6 @@ package papillon
 
 import (
 	"errors"
-	"fmt"
 	common_util "github.com/fuyao-w/common-util"
 	"io"
 	"sync"
@@ -30,24 +29,12 @@ type defaultFuture = Future[nilRespFuture]
 
 type defaultDeferResponse = deferResponse[nilRespFuture]
 
-type reject interface {
-	reject(state State)
-}
-
 type deferResponse[T any] struct {
 	err        error
 	once       *sync.Once
 	errCh      chan error
 	response   T
 	ShutdownCh <-chan struct{}
-}
-
-func (d *deferResponse[_]) reject(state State) {
-	if state == ShutDown {
-		d.fail(ErrShutDown)
-		return
-	}
-	d.fail(fmt.Errorf("current state %s can't process", state.String()))
 }
 
 func (d *deferResponse[_]) init() {

@@ -2,7 +2,6 @@ package papillon
 
 import (
 	. "github.com/fuyao-w/common-util"
-	"github.com/spf13/cast"
 	"io"
 	"sync/atomic"
 
@@ -169,8 +168,4 @@ func (r *countingReader) Read(p []byte) (n int, err error) {
 
 func (r *countingReader) Count() int64 {
 	return atomic.LoadInt64(&r.count)
-}
-
-func iToBytes(i uint64) []byte {
-	return Str2Bytes(cast.ToString(i))
 }
