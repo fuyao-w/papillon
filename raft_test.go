@@ -53,7 +53,7 @@ func buildRaft(localID string, rpc RpcInterface, store interface {
 		MaxAppendEntries:        10,
 		SnapshotThreshold:       100,
 		TrailingLogs:            1000,
-		ApplyBatch:              1,
+		ApplyBatch:              10,
 		LeadershipCatchUpRounds: 500,
 		//ShutdownOnRemove: false,
 	}
@@ -143,7 +143,8 @@ func (g *getHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 func (s *setHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	key := request.URL.Query().Get("key")
 	value := request.URL.Query().Get("value")
-	raft := getLeader(s.raftList...)
+	//raft := getLeader(s.raftList...)
+	raft := s.raftList[0]
 	fu := raft.Apply(kvSchema{}.encode(key, value), time.Second)
 	_, err := fu.Response()
 	if err != nil {

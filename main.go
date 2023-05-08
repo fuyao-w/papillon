@@ -1,7 +1,6 @@
 package papillon
 
 import (
-	"bytes"
 	"container/list"
 	"errors"
 	"fmt"
@@ -1015,16 +1014,12 @@ func (r *Raft) applyLog(future ...*LogFuture) {
 	}
 	for _, fu := range future {
 		index++
-		logs = append(logs, &LogEntry{
-			Index:     index,
-			Term:      term,
-			Data:      bytes.Clone(fu.log.Data),
-			Type:      fu.log.Type,
-			CreatedAt: now,
-		})
+		fu.log.Index = index
+		fu.log.Term = term
+		fu.log.CreatedAt = now
+		logs = append(logs, fu.log)
 	}
-	err := r.logStore.SetLogs(logs)
-	if err != nil {
+	if err := r.logStore.SetLogs(logs); err != nil {
 		r.logger.Errorf("applyLog|SetLogs err :%s", err)
 		for _, fu := range future {
 			fu.fail(err)
@@ -1054,7 +1049,6 @@ func (r *Raft) processLeaderCommit() {
 		stepDown       bool
 	)
 
-	r.logger.Infof("leader commit ori :%d,cur:%d", oldCommitIndex, newCommitIndex)
 	r.setCommitIndex(newCommitIndex)
 
 	if r.cluster.latestIndex > oldCommitIndex && r.cluster.latestIndex <= newCommitIndex {
@@ -1071,6 +1065,7 @@ func (r *Raft) processLeaderCommit() {
 			readElem = append(readElem, e)
 		}
 	}
+	//r.logger.Infof("leader commit ori :%d,cur:%d", oldCommitIndex, newCommitIndex)
 	r.applyLogToFsm(newCommitIndex, readyFuture)
 	for _, element := range readElem {
 		r.leaderState.inflight.Remove(element)

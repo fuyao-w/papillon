@@ -156,6 +156,9 @@ BREAK:
 			break BREAK
 		}
 	}
+	if len(futures) > 1 {
+		r.logger.Debug("batch append", len(futures), batch)
+	}
 	r.applyLog(futures...)
 }
 
