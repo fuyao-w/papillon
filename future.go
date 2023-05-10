@@ -17,7 +17,7 @@ var (
 type OpenSnapShot = func() (*SnapShotMeta, io.ReadCloser, error)
 
 // nilRespFuture Future 默认不需要返回值的类型
-type nilRespFuture = interface{}
+type nilRespFuture = any
 
 // Future 用于异步提交，Response 会同步返回，可以重复调用
 type Future[T any] interface {
@@ -29,31 +29,21 @@ type defaultFuture = Future[nilRespFuture]
 
 type defaultDeferResponse = deferResponse[nilRespFuture]
 
+// deferResponse Future[T any] 的实现，用于异步返回结果
 type deferResponse[T any] struct {
-	err        error
-	once       *sync.Once
-	errCh      chan error
-	response   T
-	ShutdownCh <-chan struct{}
+	err      error
+	once     *sync.Once
+	errCh    chan error
+	response T
 }
 
 func (d *deferResponse[_]) init() {
 	d.errCh = make(chan error, 1)
 	d.once = new(sync.Once)
 }
-func (d *deferResponse[_]) setTimeout() {
-	d.errCh = make(chan error, 1)
-	d.once = new(sync.Once)
-}
 
 func (d *deferResponse[T]) Response() (T, error) {
-	d.once.Do(func() {
-		select {
-		case d.err = <-d.errCh:
-		case <-d.ShutdownCh:
-			d.err = ErrShutDown
-		}
-	})
+	d.once.Do(func() { d.err = <-d.errCh })
 	return d.response, d.err
 }
 
@@ -176,10 +166,6 @@ type leadershipTransferFuture struct {
 
 type clusterGetFuture struct {
 	deferResponse[cluster]
-}
-
-type apiClusterGetFuture struct {
-	deferResponse[Configuration]
 }
 
 // bootstrapFuture is used to attempt a live bootstrap of the cluster. See the
