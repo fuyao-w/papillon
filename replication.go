@@ -86,7 +86,7 @@ func (r *Raft) replicateTo(fr *replication, latestIndex uint64) (stop bool) {
 	}
 
 	for !stop {
-		req, err := r.buildAppendEntryReq(fr, latestIndex)
+		req, err := r.buildAppendEntryReq(fr.getNextIndex(), latestIndex)
 		if err != nil {
 			if errors.Is(ErrNotFoundLog, err) {
 				return r.sendLatestSnapshot(fr)
@@ -157,7 +157,7 @@ func (r *Raft) processPipelineResult(fr *replication, pipeline AppendEntryPipeli
 
 // pipelineReplicateTo 执行长链接复制
 func (r *Raft) pipelineReplicateTo(fr *replication, pipeline AppendEntryPipeline) (stop bool) {
-	req, err := r.buildAppendEntryReq(fr, r.getLatestIndex())
+	req, err := r.buildAppendEntryReq(fr.getNextIndex(), r.getLatestIndex())
 	if err != nil {
 		r.logger.Errorf("pipelineReplicateTo|buildAppendEntryReq err:%s ,next index:%d  ,latest index :%d ,%s", err, fr.getNextIndex(), r.getLatestIndex(), fr.peer.Get().ID)
 		return true

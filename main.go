@@ -780,7 +780,7 @@ func (r *Raft) onConfigurationUpdate() {
 
 // buildAppendEntryReq 构建 AppendEntryRequest ，填充 replication.nextIndex 到 latestIndex 之前的日志以及计算 PrevLogIndex 等信息
 // 如果日志有空洞则会返回 ErrNotFoundLog 错误，通知调用方应该发送快照对跟随者的日志进行覆盖
-func (r *Raft) buildAppendEntryReq(fr *replication, latestIndex uint64) (*AppendEntryRequest, error) {
+func (r *Raft) buildAppendEntryReq(nextIndex, latestIndex uint64) (*AppendEntryRequest, error) {
 	var (
 		snapshotTerm, snapshotIndex = r.getLatestSnapshot()
 		req                         = &AppendEntryRequest{
@@ -790,14 +790,14 @@ func (r *Raft) buildAppendEntryReq(fr *replication, latestIndex uint64) (*Append
 		}
 	)
 	setupLogEntries := func() (err error) {
-		if latestIndex == 0 || fr.getNextIndex() > latestIndex {
+		if latestIndex == 0 || nextIndex > latestIndex {
 			return nil
 		}
-		req.Entries, err = r.logStore.GetLogRange(fr.getNextIndex(), latestIndex)
+		req.Entries, err = r.logStore.GetLogRange(nextIndex, latestIndex)
 		if err != nil {
 			return err
 		}
-		if uint64(len(req.Entries)) != latestIndex-fr.getNextIndex()+1 {
+		if uint64(len(req.Entries)) != latestIndex-nextIndex+1 {
 			return ErrNotFoundLog
 		}
 		return nil
