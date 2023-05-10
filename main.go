@@ -279,8 +279,8 @@ func (r *Raft) onShutDown() {
 // cycleFollower 更随者主线程
 func (r *Raft) cycleFollower() {
 	leader := r.leaderInfo.Get()
-	r.logger.Info("entering follower state", "leader-address", leader.Addr, "leader-id", leader.ID)
-	r.heartbeatTimeout = randomTimeout(r.Conf().HeartbeatTimeout)
+	r.logger.Info("entering follower state", r.localInfo.ID, "leader-address", leader.Addr, "leader-id", leader.ID)
+	heartbeatTimeout := randomTimeout(r.Conf().HeartbeatTimeout)
 	warnOnce := new(sync.Once)
 	warn := func(args ...interface{}) {
 		warnOnce.Do(func() {
@@ -295,7 +295,7 @@ func (r *Raft) cycleFollower() {
 			r.processRPC(rpc)
 		case cmd := <-r.commandCh:
 			r.processCommand(cmd)
-		case <-r.heartbeatTimeout:
+		case <-heartbeatTimeout:
 			r.processHeartBeatTimeout(warn)
 		}
 		return
@@ -834,7 +834,7 @@ func (r *Raft) buildAppendEntryReq(nextIndex, latestIndex uint64) (*AppendEntryR
 
 // leaderLease 领导人线程通知自己下台
 func (r *Raft) leaderLease(term uint64, fr *replication) {
-	r.logger.Infof("leader lease ", "from server id:", fr.peer.Get().ID)
+	r.logger.Infof("leader lease ", r.localInfo.ID, "from server id:", fr.peer.Get().ID)
 	r.setFollower()
 	r.setCurrentTerm(term)
 	asyncNotify(r.leaderState.stepDown)

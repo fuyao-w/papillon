@@ -91,15 +91,13 @@ func (r *Raft) replicateTo(fr *replication, latestIndex uint64) (stop bool) {
 			if errors.Is(ErrNotFoundLog, err) {
 				return r.sendLatestSnapshot(fr)
 			}
+			r.logger.Errorf("buildAppendEntryReq err :%s ,latest index", err, latestIndex)
 			return true
 		}
 		if len(req.Entries) > 0 {
 			r.logger.Debug("AppendEntries to ", fr.peer.Get().ID, latestIndex)
 		}
 		resp, err := r.rpc.AppendEntries(Ptr(fr.peer.Get()), req)
-		if len(req.Entries) > 0 {
-			r.logger.Debug("AppendEntries end ", fr.peer.Get().ID, latestIndex)
-		}
 		if err != nil {
 			r.logger.Errorf("heart beat err :%s", err)
 			return
