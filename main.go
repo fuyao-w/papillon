@@ -197,7 +197,7 @@ func (r *Raft) applyLogToFsm(toIndex uint64, ready map[uint64]*LogFuture) {
 			fu.success()
 			continue
 		}
-		if logFutures = append(logFutures, fu); len(logFutures) >= maxAppend {
+		if logFutures = append(logFutures, fu); len(logFutures) >= int(maxAppend) {
 			applyBatch(logFutures)
 			logFutures = make([]*LogFuture, 0, maxAppend)
 		}
@@ -387,7 +387,8 @@ func (r *Raft) storeEntries(req *AppendEntryRequest) ([]*LogEntry, error) {
 
 		}
 		if prevLogTerm != req.PrevLogTerm {
-			return nil, errors.New("prev log not match")
+			r.logger.Error("storeEntries|prev log term not match :", prevLogTerm, req.PrevLogTerm)
+			return nil, errors.New("prev log term not match")
 		}
 	}
 
@@ -435,6 +436,7 @@ func (r *Raft) processInstallSnapshot(req *InstallSnapshotRequest, cmd *RPC) {
 		}
 		io.Copy(io.Discard, cmd.Reader)
 	}()
+	r.logger.Debug("processInstallSnapshot ", r.getCurrentTerm(), req.Term)
 	if req.Term < r.getCurrentTerm() {
 		return
 	}
@@ -451,12 +453,13 @@ func (r *Raft) processInstallSnapshot(req *InstallSnapshotRequest, cmd *RPC) {
 
 	sink, err := r.snapshotStore.Create(SnapShotVersionDefault, meta.Index, meta.Term, meta.Configuration, meta.ConfigurationIndex, r.rpc)
 	if err != nil {
+		r.logger.Errorf("processInstallSnapshot|crate err :%s", err)
 		return
 	}
 	reader := newCounterReader(cmd.Reader)
 	written, err := io.Copy(sink, reader)
 	if err != nil {
-		r.logger.Errorf("")
+		r.logger.Errorf("processInstallSnapshot|Copy err :%s", err)
 		sink.Cancel()
 		return
 	}
@@ -466,6 +469,7 @@ func (r *Raft) processInstallSnapshot(req *InstallSnapshotRequest, cmd *RPC) {
 		return
 	}
 	if err = sink.Close(); err != nil {
+		r.logger.Errorf("processInstallSnapshot|close sink err :%s", err)
 		return
 	}
 	fu := &restoreFuture{ID: sink.ID()}
@@ -532,7 +536,6 @@ func (r *Raft) processFastTimeout(req *FastTimeoutRequest, cmd *RPC) {
 func (r *Raft) processAppendEntry(req *AppendEntryRequest, cmd *RPC) {
 	var (
 		succ bool
-		term = r.getLatestTerm()
 	)
 
 	defer func() {
@@ -540,7 +543,7 @@ func (r *Raft) processAppendEntry(req *AppendEntryRequest, cmd *RPC) {
 			RPCHeader:   r.buildRPCHeader(),
 			Term:        r.getCurrentTerm(),
 			Succ:        succ,
-			LatestIndex: term,
+			LatestIndex: r.getLatestIndex(),
 		}
 	}()
 	if req.Term < r.getCurrentTerm() {
@@ -560,6 +563,7 @@ func (r *Raft) processAppendEntry(req *AppendEntryRequest, cmd *RPC) {
 	}
 	entries, err := r.storeEntries(req)
 	if err != nil {
+		r.logger.Debug("processAppendEntry|storeEntries err:", err)
 		return
 	}
 
@@ -779,8 +783,7 @@ func (r *Raft) onConfigurationUpdate() {
 func (r *Raft) buildAppendEntryReq(fr *replication, latestIndex uint64) (*AppendEntryRequest, error) {
 	var (
 		snapshotTerm, snapshotIndex = r.getLatestSnapshot()
-
-		req = &AppendEntryRequest{
+		req                         = &AppendEntryRequest{
 			RPCHeader:    r.buildRPCHeader(),
 			Term:         r.getCurrentTerm(),
 			LeaderCommit: r.getCommitIndex(),
@@ -790,11 +793,11 @@ func (r *Raft) buildAppendEntryReq(fr *replication, latestIndex uint64) (*Append
 		if latestIndex == 0 || fr.getNextIndex() > latestIndex {
 			return nil
 		}
-		req.Entries, err = r.logStore.GetLogRange(fr.nextIndex, latestIndex)
+		req.Entries, err = r.logStore.GetLogRange(fr.getNextIndex(), latestIndex)
 		if err != nil {
 			return err
 		}
-		if uint64(len(req.Entries)) != latestIndex-fr.nextIndex+1 {
+		if uint64(len(req.Entries)) != latestIndex-fr.getNextIndex()+1 {
 			return ErrNotFoundLog
 		}
 		return nil
@@ -861,15 +864,22 @@ func (r *Raft) sendLatestSnapshot(fr *replication) (stop bool) {
 	}()
 	resp, err := r.rpc.InstallSnapShot(Ptr(fr.peer.Get()), &InstallSnapshotRequest{
 		RPCHeader:    r.buildRPCHeader(),
+		Term:         r.getCurrentTerm(),
 		SnapshotMeta: meta,
 	}, readCloser)
 	if err != nil {
 		r.logger.Errorf("sendLatestSnapshot|InstallSnapShot err :%s", err)
 		return
 	}
+	r.logger.Debugf("sendLatestSnapshot err :%s ,%v ,%d", err, resp.Success, meta.Index)
 	if resp.Term > r.getCurrentTerm() {
 		r.leaderLease(resp.Term, fr)
 		return true
+	}
+	if resp.Success {
+		fr.setNextIndex(meta.Index + 1)
+		r.updateMatchIndex(peer.ID, meta.Index)
+		r.logger.Debug("update next index ", fr.getNextIndex(), peer.ID)
 	}
 	fr.setLastContact()
 	fr.notifyAll(resp.Success)
@@ -1048,7 +1058,7 @@ func (r *Raft) processLeaderCommit() {
 		readElem       []*list.Element
 		stepDown       bool
 	)
-
+	//r.logger.Debug("commit index update :", newCommitIndex)
 	r.setCommitIndex(newCommitIndex)
 
 	if r.cluster.latestIndex > oldCommitIndex && r.cluster.latestIndex <= newCommitIndex {

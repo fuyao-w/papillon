@@ -10,13 +10,13 @@ type memLog struct {
 	firstIndex, lastIndex uint64
 	log                   map[uint64]*LogEntry
 }
-type MemorySore struct {
+type MemoryStore struct {
 	kv  *LockItem[map[string]interface{}] // 实现 KVStorage
 	log *LockItem[memLog]                 // 实现 LogStore
 }
 
-func newMemoryStore() *MemorySore {
-	return &MemorySore{
+func newMemoryStore() *MemoryStore {
+	return &MemoryStore{
 		kv: NewLockItem(map[string]interface{}{}),
 		log: NewLockItem(memLog{
 			log: map[uint64]*LogEntry{},
@@ -24,7 +24,7 @@ func newMemoryStore() *MemorySore {
 	}
 }
 
-func (m *MemorySore) GetLogRange(from, to uint64) (logs []*LogEntry, err error) {
+func (m *MemoryStore) GetLogRange(from, to uint64) (logs []*LogEntry, err error) {
 	m.log.Action(func(t *memLog) {
 		for i := from; i <= to; i++ {
 			log := t.log[i]
@@ -37,7 +37,7 @@ func (m *MemorySore) GetLogRange(from, to uint64) (logs []*LogEntry, err error) 
 	return
 }
 
-func (m *MemorySore) Get(key []byte) (val []byte, err error) {
+func (m *MemoryStore) Get(key []byte) (val []byte, err error) {
 	if len(key) == 0 {
 		return nil, ErrKeyIsNil
 	}
@@ -51,7 +51,7 @@ func (m *MemorySore) Get(key []byte) (val []byte, err error) {
 	return nil, ErrKeyNotFound
 }
 
-func (m *MemorySore) Set(key []byte, val []byte) (err error) {
+func (m *MemoryStore) Set(key []byte, val []byte) (err error) {
 	if len(key) == 0 {
 		return ErrKeyIsNil
 	}
@@ -64,7 +64,7 @@ func (m *MemorySore) Set(key []byte, val []byte) (err error) {
 	return
 }
 
-func (m *MemorySore) SetUint64(key []byte, val uint64) (err error) {
+func (m *MemoryStore) SetUint64(key []byte, val uint64) (err error) {
 	if len(key) == 0 {
 		return ErrKeyIsNil
 	}
@@ -74,7 +74,7 @@ func (m *MemorySore) SetUint64(key []byte, val uint64) (err error) {
 	return
 }
 
-func (m *MemorySore) GetUint64(key []byte) (uint64, error) {
+func (m *MemoryStore) GetUint64(key []byte) (uint64, error) {
 	if len(key) == 0 {
 		return 0, ErrKeyIsNil
 	}
@@ -87,7 +87,7 @@ func (m *MemorySore) GetUint64(key []byte) (uint64, error) {
 	}
 	return 0, ErrKeyNotFound
 }
-func (m *MemorySore) FirstIndex() (uint64, error) {
+func (m *MemoryStore) FirstIndex() (uint64, error) {
 	var idx uint64
 	m.log.Action(func(t *memLog) {
 		idx = (*t).firstIndex
@@ -95,7 +95,7 @@ func (m *MemorySore) FirstIndex() (uint64, error) {
 	return idx, nil
 }
 
-func (m *MemorySore) LastIndex() (uint64, error) {
+func (m *MemoryStore) LastIndex() (uint64, error) {
 	var idx uint64
 	m.log.Action(func(t *memLog) {
 		idx = (*t).lastIndex
@@ -103,7 +103,7 @@ func (m *MemorySore) LastIndex() (uint64, error) {
 	return idx, nil
 }
 
-func (m *MemorySore) GetLog(index uint64) (log *LogEntry, err error) {
+func (m *MemoryStore) GetLog(index uint64) (log *LogEntry, err error) {
 	m.log.Action(func(t *memLog) {
 		s := *t
 		l, ok := s.log[index]
@@ -116,7 +116,7 @@ func (m *MemorySore) GetLog(index uint64) (log *LogEntry, err error) {
 	return
 }
 
-func (m *MemorySore) SetLogs(logs []*LogEntry) (err error) {
+func (m *MemoryStore) SetLogs(logs []*LogEntry) (err error) {
 	m.log.Action(func(t *memLog) {
 		s := *t
 		var exists []uint64
@@ -139,7 +139,7 @@ func (m *MemorySore) SetLogs(logs []*LogEntry) (err error) {
 	return nil
 }
 
-func (m *MemorySore) DeleteRange(min, max uint64) error {
+func (m *MemoryStore) DeleteRange(min, max uint64) error {
 	if min > max {
 		return ErrRange
 	}

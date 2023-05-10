@@ -141,24 +141,24 @@ func (r *Raft) processLogApply(item interface{}) {
 	var (
 		fu      = item.(*LogFuture)
 		futures = []*LogFuture{fu}
-		batch   = r.Conf().ApplyBatch
 	)
 	if r.leaderState.getLeadershipTransfer() {
 		fu.fail(ErrLeadershipTransferInProgress)
 		return
 	}
-BREAK:
-	for i := 0; i < batch; i++ {
-		select {
-		case applyFu := <-r.apiLogApplyCh:
-			futures = append(futures, applyFu)
-		default:
-			break BREAK
+
+	if r.Conf().ApplyBatch {
+	BREAK:
+		for i := uint(0); i < r.Conf().MaxAppendEntries; i++ {
+			select {
+			case applyFu := <-r.apiLogApplyCh:
+				futures = append(futures, applyFu)
+			default:
+				break BREAK
+			}
 		}
 	}
-	if len(futures) > 1 {
-		r.logger.Debug("batch append", len(futures), batch)
-	}
+
 	r.applyLog(futures...)
 }
 

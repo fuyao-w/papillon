@@ -148,6 +148,7 @@ func (r *Raft) processPipelineResult(fr *replication, pipeline AppendEntryPipeli
 				r.updateLatestCommit(fr, fu.Request().Entries)
 			} else {
 				fr.setNextIndex(Max(1, Min(fr.getNextIndex()-1, resp.LatestIndex)))
+				r.logger.Debug("processPipelineResult", fr.getNextIndex(), fr.peer.Get().ID)
 			}
 		}
 
@@ -158,7 +159,7 @@ func (r *Raft) processPipelineResult(fr *replication, pipeline AppendEntryPipeli
 func (r *Raft) pipelineReplicateTo(fr *replication, pipeline AppendEntryPipeline) (stop bool) {
 	req, err := r.buildAppendEntryReq(fr, r.getLatestIndex())
 	if err != nil {
-		r.logger.Errorf("pipelineReplicateTo|buildAppendEntryReq err:%s", err)
+		r.logger.Errorf("pipelineReplicateTo|buildAppendEntryReq err:%s ,next index:%d  ,latest index :%d ,%s", err, fr.getNextIndex(), r.getLatestIndex(), fr.peer.Get().ID)
 		return true
 	}
 	_, err = pipeline.AppendEntries(req)

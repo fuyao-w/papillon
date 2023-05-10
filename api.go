@@ -63,7 +63,9 @@ func (r *Raft) Apply(data []byte, timeout time.Duration) ApplyFuture {
 	return r.apiApplyLog(&LogEntry{Data: data, Type: LogCommand}, timeout)
 }
 func (r *Raft) apiApplyLog(entry *LogEntry, timeout time.Duration) ApplyFuture {
-	var tm <-chan time.Time
+	var (
+		tm <-chan time.Time
+	)
 	if timeout > 0 {
 		tm = time.After(timeout)
 	}

@@ -53,7 +53,7 @@ func buildRaft(localID string, rpc RpcInterface, store interface {
 		MaxAppendEntries:        10,
 		SnapshotThreshold:       100,
 		TrailingLogs:            1000,
-		ApplyBatch:              10,
+		ApplyBatch:              true,
 		LeadershipCatchUpRounds: 500,
 		//ShutdownOnRemove: false,
 	}
@@ -64,11 +64,11 @@ func buildRaft(localID string, rpc RpcInterface, store interface {
 		rpc = newMemRpc(localID)
 	}
 	fsm := newMemFSM()
-	fileSnapshot, err := NewFileSnapshot("./testsnapshot/snapshot"+localID, false, 3)
-	if err != nil {
-		panic(err)
-	}
-	raft, err := NewRaft(conf, fsm, rpc, store, store, fileSnapshot)
+	//fileSnapshot, err := NewFileSnapshot("./testsnapshot/snapshot"+localID, false, 3)
+	//if err != nil {
+	//	panic(err)
+	//}
+	raft, err := NewRaft(conf, fsm, rpc, store, store, newMemSnapShot())
 	if err != nil {
 		panic(err)
 	}
