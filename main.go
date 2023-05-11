@@ -358,17 +358,11 @@ func (r *Raft) saveConfiguration(entry *LogEntry) {
 
 // storeEntries 持久化日志，需要校验 PrevLogIndex、PrevLogTerm 是否匹配
 func (r *Raft) storeEntries(req *AppendEntryRequest) ([]*LogEntry, error) {
-	if len(req.Entries) == 0 {
-		return nil, nil
-	}
 	var (
 		newEntries              []*LogEntry
 		latestTerm, latestIndex = r.getLatestEntry()
 	)
 
-	if req.PrevLogIndex+1 != req.Entries[0].Index {
-		return nil, errors.New("request prev log index not match first entry's index")
-	}
 	// 校验日志是否匹配
 	// 只要有和 prevTerm、prevIndex 匹配的日志就行，不一定是最新的，日志可能会被领导人覆盖，lastIndex 可能回退
 	if req.PrevLogIndex > 0 { // 第一个日志 PrevLogIndex 为 0 ，所以这里加判断
@@ -649,6 +643,9 @@ func (r *Raft) processVote(req *VoteRequest, cmd *RPC) {
 		return
 	}
 	granted = true
+	if req.LeaderTransfer {
+		r.logger.Info("vote for", req.ID, " cause leader transfer")
+	}
 }
 func (r *Raft) cycle(state State, f func() (stop bool)) {
 	for r.state.Get() == state && !f() {
@@ -788,8 +785,10 @@ func (r *Raft) buildAppendEntryReq(nextIndex, latestIndex uint64) (*AppendEntryR
 			Term:         r.getCurrentTerm(),
 			LeaderCommit: r.getCommitIndex(),
 		}
+		maxAppendEntries = r.Conf().MaxAppendEntries
 	)
 	setupLogEntries := func() (err error) {
+		latestIndex = Min(latestIndex, nextIndex+maxAppendEntries-1)
 		if latestIndex == 0 || nextIndex > latestIndex {
 			return nil
 		}
@@ -804,10 +803,12 @@ func (r *Raft) buildAppendEntryReq(nextIndex, latestIndex uint64) (*AppendEntryR
 	}
 
 	setupPrevLog := func() error {
-		if len(req.Entries) == 0 {
-			return nil
+		var prevIndex uint64
+		if len(req.Entries) != 0 {
+			prevIndex = req.Entries[0].Index - 1
+		} else {
+			prevIndex = latestIndex
 		}
-		prevIndex := req.Entries[0].Index - 1
 		switch {
 		case prevIndex == 0: // 第一个日志
 		case prevIndex == snapshotIndex: // 上一个 index 正好是快照的最后一个日志，避免触发快照安装
@@ -893,7 +894,7 @@ func (r *Raft) updateLatestCommit(fr *replication, entries []*LogEntry) {
 		last := entries[len(entries)-1]
 		fr.setNextIndex(last.Index + 1)
 		r.updateMatchIndex(peer.ID, last.Index)
-		if r.getCommitIndex()-fr.nextIndex < 50 {
+		if r.getCommitIndex()-fr.getNextIndex() < 50 {
 			r.logger.Infof("peer :%s catch up", peer.ID)
 		}
 	}
@@ -932,6 +933,7 @@ func (r *Raft) reloadReplication() {
 			notify:        NewLockItem(map[*verifyFuture]struct{}{}),
 		}
 		r.leaderState.replicate[server.ID] = fr
+		r.logger.Info("begin replicate", server.ID, nextIndex)
 		r.goFunc(
 			func() { r.heartBeat(fr) },
 			func() { r.replicate(fr) },
@@ -1225,6 +1227,9 @@ func (r *Raft) launchElection() chan *voteResult {
 		result              = make(chan *voteResult, len(list))
 	)
 	for _, info := range list {
+		if !info.isVoter() {
+			continue
+		}
 		if info.ID == r.localInfo.ID {
 			if err := r.kvStore.Set(KeyLastVoteFor, Str2Bytes(info.ID)); err != nil {
 				r.logger.Errorf("launchElection vote for self error :%s", err)

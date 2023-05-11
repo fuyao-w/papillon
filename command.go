@@ -1,6 +1,7 @@
 package papillon
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	. "github.com/fuyao-w/common-util"
@@ -37,6 +38,7 @@ const (
 	commandVerifyLeader
 	commandConfigReload
 	commandLeadershipTransfer
+	commandRaftState
 )
 
 var channelCommand commandMap
@@ -73,6 +75,11 @@ func init() {
 		},
 		commandClusterChange: {
 			Leader: (*Raft).processClusterChange,
+		},
+		commandRaftState: {
+			Follower:  (*Raft).processRaftState,
+			Candidate: (*Raft).processRaftState,
+			Leader:    (*Raft).processRaftState,
 		},
 	}
 }
@@ -149,7 +156,7 @@ func (r *Raft) processLogApply(item interface{}) {
 
 	if r.Conf().ApplyBatch {
 	BREAK:
-		for i := uint(0); i < r.Conf().MaxAppendEntries; i++ {
+		for i := uint64(0); i < r.Conf().MaxAppendEntries; i++ {
 			select {
 			case applyFu := <-r.apiLogApplyCh:
 				futures = append(futures, applyFu)
@@ -168,6 +175,10 @@ func (r *Raft) processBootstrap(item interface{}) {
 	var (
 		fu = item.(*bootstrapFuture)
 	)
+	if !fu.configuration.hasVoter(r.localInfo.ID) {
+		fu.fail(ErrNotVoter)
+		return
+	}
 	if !validateConfiguration(fu.configuration) {
 		fu.fail(ErrIllegalConfiguration)
 		return
@@ -348,6 +359,7 @@ func (r *Raft) processLeadershipTransfer(item interface{}) {
 		fu.fail(ErrLeadershipTransferInProgress)
 		return
 	}
+	r.logger.Info("leader transfer choice", fr.peer.Get().ID)
 	go func() {
 		fu.responded(nil, r.leadershipTransfer(fr))
 		r.leaderState.setupLeadershipTransfer(false)
@@ -433,4 +445,41 @@ func (r *Raft) processClusterChange(item interface{}) {
 	r.onConfigurationUpdate()
 	r.reloadReplication()
 	fu.success()
+}
+
+// processRaftState 获取 Raft 状态上下文
+func (r *Raft) processRaftState(item interface{}) {
+	var (
+		fu = item.(*deferResponse[string])
+	)
+	fu.responded(func() string {
+		snapshotTerm, snapshotIndex := r.getLatestSnapshot()
+		logTerm, logIndex := r.getLatestLog()
+		leader := r.leaderInfo.Get()
+		var (
+			lastContact []Tuple[ServerID, time.Time]
+			nextIndex   []Tuple[ServerID, uint64]
+		)
+		for id, repl := range r.leaderState.replicate {
+			lastContact = append(lastContact, BuildTuple(id, repl.lastContact.Get()))
+			nextIndex = append(nextIndex, BuildTuple(id, repl.getNextIndex()))
+		}
+		var m = map[string]interface{}{
+			"state":                 r.state.String(),
+			"current_term":          r.getCurrentTerm(),
+			"latest_log_term":       logTerm,
+			"latest_log_index":      logIndex,
+			"latest_snapshot_term":  snapshotTerm,
+			"latest_snapshot_index": snapshotIndex,
+			"commit_index":          r.getCommitIndex(),
+			"leader_id":             leader.ID,
+			"leader_addr":           leader.Addr,
+		}
+		if r.state == Leader {
+			m["last_contact"] = lastContact
+			m["next_index"] = nextIndex
+		}
+		date, _ := json.MarshalIndent(m, "", "	")
+		return string(date)
+	}(), nil)
 }

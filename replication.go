@@ -244,6 +244,7 @@ func (r *Raft) replicateHelper(fr *replication) (stop bool) {
 			return true
 		case <-ticker.C:
 			stop = r.replicateTo(fr, r.getLatestIndex())
+			r.logger.Debug("replicateTo -", fr.peer.Get().ID, fr.getNextIndex(), r.getLatestIndex())
 		case fu := <-fr.trigger:
 			stop = r.replicateTo(fr, r.getLatestIndex())
 			if fu == nil {

@@ -15,7 +15,7 @@ type Config struct {
 	HeartbeatTimeout        time.Duration
 	LeaderLeaseTimeout      time.Duration
 	ApplyBatch              bool
-	MaxAppendEntries        uint
+	MaxAppendEntries        uint64
 	CommitTimeout           time.Duration
 	SnapshotInterval        time.Duration
 	SnapshotThreshold       uint64
@@ -59,7 +59,7 @@ func ValidateConfig(c *Config) (bool, string) {
 	if c.MaxAppendEntries < 1 {
 		return false, "MaxAppendEntries must greater than 1"
 	}
-	maximumAppendEntries := uint(1024)
+	maximumAppendEntries := uint64(1024)
 	if c.MaxAppendEntries > maximumAppendEntries {
 		return false, fmt.Sprintf("MaxAppendEntries must less than or equal to %d", maximumAppendEntries)
 	}

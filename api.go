@@ -246,3 +246,13 @@ func (r *Raft) ShutDown() defaultFuture {
 	})
 	return resp
 }
+
+func (r *Raft) RaftState() Future[string] {
+	fu := new(deferResponse[string])
+	fu.init()
+	r.commandCh <- &command{
+		enum:     commandRaftState,
+		callback: fu,
+	}
+	return fu
+}

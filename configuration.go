@@ -35,6 +35,16 @@ func (c *cluster) Clone() cluster {
 func (c *cluster) stable() bool {
 	return c.commitIndex > 0 && c.latestIndex == c.commitIndex
 }
+
+// hasVoter 判断一个节点是否有选举权
+func (c *Configuration) hasVoter(id ServerID) bool {
+	for _, server := range c.Servers {
+		if server.ID == id {
+			return server.isVoter()
+		}
+	}
+	return false
+}
 func DecodeConfiguration(data []byte) (c Configuration) {
 	if err := json.Unmarshal(data, &c); err != nil {
 		panic(fmt.Errorf("failed to decode Configuration: %s ,%s", err, data))

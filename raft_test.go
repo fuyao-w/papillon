@@ -20,7 +20,7 @@ func TestRaft(t *testing.T) {
 		raft1.BootstrapCluster(Configuration{Servers: []ServerInfo{
 			{Voter, "1", "1"},
 			{Voter, "2", "2"},
-			{Voter, "3", "3"},
+			//{Voter, "3", "3"},
 		}})
 	}()
 	raftList := []*Raft{raft1, raft2, raft3}
@@ -33,6 +33,7 @@ func TestRaft(t *testing.T) {
 	http.Handle("/snapshot", &snapshotHandle{raftList})
 	http.Handle("/restore", &userRestoreSnapshotHandle{raftList})
 	http.Handle("/add_peer", &addPeerHandle{raftList})
+	http.Handle("/raft_state", &raftGetHandle{raftList})
 	http.ListenAndServe("localhost:8080", nil)
 }
 
@@ -51,7 +52,7 @@ func buildRaft(localID string, rpc RpcInterface, store interface {
 		CommitTimeout:           time.Second,
 		LeaderLeaseTimeout:      time.Second * 1,
 		MaxAppendEntries:        10,
-		SnapshotThreshold:       100,
+		SnapshotThreshold:       1000,
 		TrailingLogs:            1000,
 		ApplyBatch:              true,
 		LeadershipCatchUpRounds: 500,
@@ -114,6 +115,10 @@ type (
 	addPeerHandle struct {
 		raftList []*Raft
 	}
+
+	raftGetHandle struct {
+		raftList []*Raft
+	}
 )
 
 func (g *leaderTransferHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -143,8 +148,7 @@ func (g *getHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 func (s *setHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	key := request.URL.Query().Get("key")
 	value := request.URL.Query().Get("value")
-	//raft := getLeader(s.raftList...)
-	raft := s.raftList[0]
+	raft := getLeader(s.raftList...)
 	fu := raft.Apply(kvSchema{}.encode(key, value), time.Second)
 	_, err := fu.Response()
 	if err != nil {
@@ -171,7 +175,6 @@ func (s *verifyHandle) ServeHTTP(writer http.ResponseWriter, request *http.Reque
 
 }
 func (s *configGetHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
-
 	cluster := s.Raft.GetConfiguration()
 	b, _ := json.Marshal(cluster)
 	writer.Write([]byte(b))
@@ -214,17 +217,31 @@ func (s *snapshotHandle) ServeHTTP(writer http.ResponseWriter, request *http.Req
 	writer.Write(b)
 }
 func (s *addPeerHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
-	//addr := request.URL.Query().Get("addr")
-	//id := request.URL.Query().Get("id")
-	//
-	//leader := getLeader(s.raftList...)
-	//fu := leader.AddVoter(ServerID(id), ServerAddr(addr), 0, time.Second)
-	//_, err := fu.Response()
-	//if err != nil {
-	//	writer.Write([]byte(err.Error()))
-	//} else {
-	//	writer.Write([]byte("succ"))
-	//}
+	addr := request.URL.Query().Get("addr")
+	id := request.URL.Query().Get("id")
+
+	leader := getLeader(s.raftList...)
+	fu := leader.AddServer(ServerInfo{
+		Suffrage: Voter,
+		Addr:     ServerAddr(addr),
+		ID:       ServerID(id),
+	}, 0, time.Second)
+	_, err := fu.Response()
+	if err != nil {
+		writer.Write([]byte(err.Error()))
+	} else {
+		writer.Write([]byte("succ"))
+	}
+}
+func (s *raftGetHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	idx := cast.ToInt(request.URL.Query().Get("idx"))
+	if idx < 0 || idx >= len(s.raftList) {
+		writer.Write([]byte("param err"))
+		return
+	}
+	fu := s.raftList[idx].RaftState()
+	stat, _ := fu.Response()
+	writer.Write([]byte(stat))
 }
 func (s *userRestoreSnapshotHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	//raft := getLeader(s.raftList...)
