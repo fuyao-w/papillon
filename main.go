@@ -280,7 +280,7 @@ func (r *Raft) onShutDown() {
 func (r *Raft) cycleFollower() {
 	leader := r.leaderInfo.Get()
 	r.logger.Info("entering follower state", r.localInfo.ID, "leader-address", leader.Addr, "leader-id", leader.ID)
-	heartbeatTimeout := randomTimeout(r.Conf().HeartbeatTimeout)
+	r.heartbeatTimeout = randomTimeout(r.Conf().HeartbeatTimeout)
 	warnOnce := new(sync.Once)
 	warn := func(args ...interface{}) {
 		warnOnce.Do(func() {
@@ -295,7 +295,7 @@ func (r *Raft) cycleFollower() {
 			r.processRPC(rpc)
 		case cmd := <-r.commandCh:
 			r.processCommand(cmd)
-		case <-heartbeatTimeout:
+		case <-r.heartbeatTimeout:
 			r.processHeartBeatTimeout(warn)
 		}
 		return
@@ -1150,6 +1150,7 @@ func (r *Raft) clacNewConfiguration(req *configurationChangeRequest) (newConfigu
 		found := false
 		for _, server := range r.getLatestConfiguration() {
 			if server.ID == req.peer.ID {
+				found = true
 				continue
 			} else {
 				newConfiguration.Servers = append(newConfiguration.Servers, server)

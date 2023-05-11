@@ -114,6 +114,7 @@ func (r *Raft) processCommand(cmd *command) {
 func (r *Raft) processHeartBeatTimeout(warn func(...interface{})) {
 	tm := r.Conf().HeartbeatTimeout
 	r.heartbeatTimeout = randomTimeout(tm)
+
 	if time.Now().Before(r.getLastContact().Add(tm)) {
 		return
 	}

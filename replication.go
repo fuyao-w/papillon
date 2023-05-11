@@ -95,7 +95,7 @@ func (r *Raft) replicateTo(fr *replication, latestIndex uint64) (stop bool) {
 			return true
 		}
 		if len(req.Entries) > 0 {
-			r.logger.Debug("AppendEntries to ", fr.peer.Get().ID, latestIndex)
+			r.logger.Debug("AppendEntries to ", fr.peer.Get().ID, fr.getNextIndex(), latestIndex)
 		}
 		resp, err := r.rpc.AppendEntries(Ptr(fr.peer.Get()), req)
 		if err != nil {
@@ -244,7 +244,6 @@ func (r *Raft) replicateHelper(fr *replication) (stop bool) {
 			return true
 		case <-ticker.C:
 			stop = r.replicateTo(fr, r.getLatestIndex())
-			r.logger.Debug("replicateTo -", fr.peer.Get().ID, fr.getNextIndex(), r.getLatestIndex())
 		case fu := <-fr.trigger:
 			stop = r.replicateTo(fr, r.getLatestIndex())
 			if fu == nil {

@@ -219,13 +219,30 @@ func (s *snapshotHandle) ServeHTTP(writer http.ResponseWriter, request *http.Req
 func (s *addPeerHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	addr := request.URL.Query().Get("addr")
 	id := request.URL.Query().Get("id")
-
+	suffrage := request.URL.Query().Get("suffrage")
+	action := cast.ToInt(request.URL.Query().Get("action"))
 	leader := getLeader(s.raftList...)
-	fu := leader.AddServer(ServerInfo{
-		Suffrage: Voter,
-		Addr:     ServerAddr(addr),
-		ID:       ServerID(id),
-	}, 0, time.Second)
+	var fu IndexFuture
+	if action == 0 {
+		fu = leader.AddServer(ServerInfo{
+			Suffrage: Suffrage(cast.ToInt(suffrage)),
+			Addr:     ServerAddr(addr),
+			ID:       ServerID(id),
+		}, 0, time.Second)
+	} else if action == 1 {
+		fu = leader.RemoveServer(ServerInfo{
+			Suffrage: Suffrage(cast.ToInt(suffrage)),
+			Addr:     ServerAddr(addr),
+			ID:       ServerID(id),
+		}, 0, time.Second)
+	} else {
+		fu = leader.UpdateServer(ServerInfo{
+			Suffrage: Suffrage(cast.ToInt(suffrage)),
+			Addr:     ServerAddr(addr),
+			ID:       ServerID(id),
+		}, 0, time.Second)
+	}
+
 	_, err := fu.Response()
 	if err != nil {
 		writer.Write([]byte(err.Error()))
