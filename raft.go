@@ -42,7 +42,7 @@ type (
 		fsmApplyCh    chan []*LogFuture       // 状态机线程的日志提交通知
 		fsmSnapshotCh chan *fsmSnapshotFuture // 从状态机取快照
 		fsmRestoreCh  chan *restoreFuture     // 通知状态机重新应用快照
-
+		readOnly      readOnly                // 跟踪只读查询的请求
 		//-----API--------------------
 		apiSnapshotBuildCh   chan *apiSnapshotFuture // 生成快照
 		apiSnapshotRestoreCh chan *userRestoreFuture // 重新应用快照的时候不能接收新的日志，需要从 runState 线程触发
@@ -77,6 +77,10 @@ type (
 	StateChange struct {
 		Before, After State
 	}
+	readOnly struct {
+		notifySet map[*readOnlyFuture]struct{}
+		request   chan *readOnlyFuture
+	}
 )
 
 const (
@@ -100,6 +104,22 @@ type (
 		ID       ServerID
 	}
 )
+
+func (r *readOnly) observe(future *readOnlyFuture) {
+	r.notifySet[future] = struct{}{}
+}
+func (r *readOnly) notify(index uint64) {
+	for future := range r.notifySet {
+		if future.readIndex <= index {
+			future.responded(index, nil)
+			delete(r.notifySet, future)
+		}
+	}
+	// 释放内存
+	if len(r.notifySet) == 0 {
+		r.notifySet = map[*readOnlyFuture]struct{}{}
+	}
+}
 
 func (s *Suffrage) MarshalText() (text []byte, err error) {
 	if suffrage := s.String(); suffrage == unknown {

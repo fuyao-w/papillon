@@ -103,14 +103,23 @@ func (r *Raft) runFSM() {
 					lastAppliedIdx, lastAppliedTerm = future.log.Index, future.log.Term
 				}
 			}
+			r.readOnly.notify(lastAppliedIdx)
 		case fu := <-r.fsmRestoreCh:
 			meta, err := r.recoverSnapshotByID(fu.ID)
 			if err == nil {
 				lastAppliedIdx, lastAppliedTerm = meta.Index, meta.Term
 			}
 			fu.responded(nil, err)
+			r.readOnly.notify(lastAppliedIdx)
 		case fu := <-r.fsmSnapshotCh:
 			snapshot(fu)
+
+		case fu := <-r.readOnly.request:
+			if fu.readIndex <= lastAppliedIdx {
+				fu.responded(lastAppliedIdx, nil)
+				continue
+			}
+			r.readOnly.observe(fu)
 		}
 	}
 }

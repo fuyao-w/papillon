@@ -34,6 +34,7 @@ func TestRaft(t *testing.T) {
 	http.Handle("/restore", &userRestoreSnapshotHandle{raftList})
 	http.Handle("/add_peer", &reloadPeerHandle{raftList})
 	http.Handle("/raft_state", &raftGetHandle{raftList})
+	http.Handle("/read_only", &readOnlyHandle{raftList})
 	http.ListenAndServe("localhost:8080", nil)
 }
 
@@ -117,6 +118,12 @@ type (
 	}
 
 	raftGetHandle struct {
+		raftList []*Raft
+	}
+	readIndexHandle struct {
+		raftList []*Raft
+	}
+	readOnlyHandle struct {
 		raftList []*Raft
 	}
 )
@@ -290,4 +297,12 @@ func (s *userRestoreSnapshotHandle) ServeHTTP(writer http.ResponseWriter, reques
 	//} else {
 	//	writer.Write([]byte("succ"))
 	//}
+}
+
+func (s *readOnlyHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	idx := cast.ToUint64(request.URL.Query().Get("idx"))
+	readIndex := cast.ToUint64(request.URL.Query().Get("index"))
+	fu := s.raftList[idx].Barrier(readIndex, 0)
+	i, _ := fu.Response()
+	writer.Write([]byte(cast.ToString(i)))
 }

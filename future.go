@@ -238,3 +238,8 @@ func (e *errFuture[T]) Index() uint64 {
 func (e *errFuture[T]) Response() (t T, _ error) {
 	return t, e.err
 }
+
+type readOnlyFuture struct {
+	deferResponse[uint64]
+	readIndex uint64
+}

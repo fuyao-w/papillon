@@ -39,6 +39,7 @@ const (
 	commandConfigReload
 	commandLeadershipTransfer
 	commandRaftStats
+	commandReadIndex
 )
 
 var channelCommand commandMap
@@ -82,6 +83,9 @@ func init() {
 			Follower:  (*Raft).processRaftStats,
 			Candidate: (*Raft).processRaftStats,
 			Leader:    (*Raft).processRaftStats,
+		},
+		commandReadIndex: {
+			Leader: (*Raft).processReadIndex,
 		},
 	}
 }
@@ -507,4 +511,17 @@ func (r *Raft) processRaftStats(item interface{}) {
 		date, _ := json.MarshalIndent(m, "", "	")
 		return string(date)
 	}(), nil)
+}
+
+// processReadIndex 获取 Raft 状态上下文
+func (r *Raft) processReadIndex(item interface{}) {
+	var (
+		fu = item.(*deferResponse[uint64])
+	)
+	commitIndex := r.getCommitIndex()
+	if commitIndex == 0 {
+		fu.fail(ErrEmptyCommit)
+		return
+	}
+	fu.responded(commitIndex, nil)
 }

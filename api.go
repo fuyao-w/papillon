@@ -25,7 +25,15 @@ var (
 	ErrLeadershipTransferFail = errors.New("not found transfer peer")
 	ErrLeadershipLost         = errors.New("leadership lost")
 	ErrNothingNewToSnapshot   = errors.New("nothing new to snapshot")
+	ErrEmptyCommit            = errors.New("empty commit")
 )
+
+func genTimeoutCh(timeout time.Duration) (tm <-chan time.Time) {
+	if timeout > 0 {
+		tm = time.After(timeout)
+	}
+	return tm
+}
 
 type customError struct{ string }
 
@@ -253,6 +261,35 @@ func (r *Raft) RaftState() Future[string] {
 	r.commandCh <- &command{
 		enum:     commandRaftStats,
 		callback: fu,
+	}
+	return fu
+}
+
+func (r *Raft) ReadIndex(timeout time.Duration) Future[uint64] {
+	tm := genTimeoutCh(timeout)
+	fu := new(deferResponse[uint64])
+	fu.init()
+	select {
+	case <-tm:
+		fu.fail(ErrTimeout)
+	case r.commandCh <- &command{
+		enum:     commandReadIndex,
+		callback: fu,
+	}:
+	}
+	return fu
+}
+
+func (r *Raft) Barrier(readIndex uint64, timeout time.Duration) Future[uint64] {
+	tm := genTimeoutCh(timeout)
+	fu := &readOnlyFuture{
+		readIndex: readIndex,
+	}
+	fu.init()
+	select {
+	case <-tm:
+		fu.fail(ErrTimeout)
+	case r.readOnly.request <- fu:
 	}
 	return fu
 }
