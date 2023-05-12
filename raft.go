@@ -2,6 +2,7 @@ package papillon
 
 import (
 	"container/list"
+	"fmt"
 	. "github.com/fuyao-w/common-util"
 	"golang.org/x/sync/errgroup"
 	"sync"
@@ -11,11 +12,11 @@ import (
 
 type (
 	Raft struct {
-		commitIndex   uint64                    // 集群已提交的日志，初始化为 0 只有再提交过日志后才可以更新
-		lastApplied   uint64                    // 已提交给状态机的最新 index , 注意：不代表状态机已经应用
-		currentTerm   uint64                    // 当前任期，需要持久化
-		configuration *AtomicVal[Configuration] // 集群配置的副本
-		conf          *AtomicVal[*Config]       // 参数配置信息
+		commitIndex   uint64                  // 集群已提交的日志，初始化为 0 只有再提交过日志后才可以更新
+		lastApplied   uint64                  // 已提交给状态机的最新 index , 注意：不代表状态机已经应用
+		currentTerm   uint64                  // 当前任期，需要持久化
+		configuration *AtomicVal[ClusterInfo] // 集群配置的副本
+		conf          *AtomicVal[*Config]     // 参数配置信息
 		confReloadMu  sync.Mutex
 		state         State                 // 节点状态
 		run           func()                // 主线程函数
@@ -70,7 +71,7 @@ type (
 		matchIndex         map[ServerID]uint64       // 每个跟随者对应的已复制的 index
 		replicate          map[ServerID]*replication // 所有的跟随者
 		inflight           *list.List                // 等待提交并应用到状态机的 LogFuture
-		stepDown           chan struct{}             // 领导人下台通知
+		stepDown           chan ServerID             // 领导人下台通知
 		matchLock          sync.Mutex
 	}
 	StateChange struct {
@@ -81,6 +82,11 @@ type (
 const (
 	Voter Suffrage = iota
 	NonVoter
+)
+const (
+	unknown     = "Unknown"
+	voterStr    = "Voter"
+	nonVoterStr = "NonVoter"
 )
 
 type (
@@ -95,14 +101,44 @@ type (
 	}
 )
 
+func (s *Suffrage) MarshalText() (text []byte, err error) {
+	if suffrage := s.String(); suffrage == unknown {
+		return nil, fmt.Errorf("unknown suffrage :%d", *s)
+	} else {
+		return Str2Bytes(suffrage), nil
+	}
+}
+func (s *Suffrage) UnmarshalText(text []byte) error {
+	switch Bytes2Str(text) {
+	case voterStr:
+		*s = Voter
+	case nonVoterStr:
+		*s = NonVoter
+	default:
+		return fmt.Errorf("unknown suffrage :%d", *s)
+	}
+	return nil
+}
+
+func (s *Suffrage) String() string {
+	switch *s {
+	case Voter:
+		return voterStr
+	case NonVoter:
+		return nonVoterStr
+	default:
+		return unknown
+	}
+}
+
 func (r *Raft) Conf() *Config {
 	return r.conf.Load()
 }
-func (r *Raft) setLatestConfiguration(index uint64, configuration Configuration) {
+func (r *Raft) setLatestConfiguration(index uint64, configuration ClusterInfo) {
 	r.cluster.setLatest(index, configuration)
 	r.configuration.Store(configuration)
 }
-func (r *Raft) setCommitConfiguration(index uint64, configuration Configuration) {
+func (r *Raft) setCommitConfiguration(index uint64, configuration ClusterInfo) {
 	r.cluster.setCommit(index, configuration)
 }
 func (r *Raft) getLatestIndex() uint64 {
@@ -224,9 +260,10 @@ func (r *Raft) setLeader() {
 	r.run = r.cycleLeader
 }
 
+// setShutDown 只能由 Raft.ShutDown 调用
 func (r *Raft) setShutDown() {
 	r.setState(ShutDown)
-	r.run = func() {}
+	r.run = nil
 	r.onShutDown()
 }
 
@@ -248,7 +285,7 @@ func (r *Raft) setLatestSnapshot(term, index uint64) {
 		t.snapshot = lastLog{index: index, term: term}
 	})
 }
-func (r *Raft) getLatestConfiguration() []ServerInfo {
+func (r *Raft) getLatestCluster() []ServerInfo {
 	return r.cluster.latest.Servers
 }
 func (r *Raft) inConfiguration(id ServerID) bool {
@@ -261,7 +298,7 @@ func (r *Raft) inConfiguration(id ServerID) bool {
 }
 
 func (r *Raft) canVote(id ServerID) bool {
-	for _, serverInfo := range r.getLatestConfiguration() {
+	for _, serverInfo := range r.getLatestCluster() {
 		if serverInfo.ID == id {
 			return serverInfo.isVoter()
 		}

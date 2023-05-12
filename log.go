@@ -27,5 +27,5 @@ const (
 	LogBarrier
 	// LogNoop 只用于确认 leader
 	LogNoop
-	LogConfiguration
+	LogCluster
 )

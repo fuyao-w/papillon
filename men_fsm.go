@@ -34,10 +34,10 @@ type memFSM struct {
 	logHash
 	lastIndex, lastTerm uint64
 	kv                  *LockItem[map[string]string] // 简单提供 kv 功能
-	configurations      []Configuration
+	configurations      []ClusterInfo
 }
 
-func (m *memFSM) StoreConfiguration(index uint64, configuration Configuration) {
+func (m *memFSM) StoreConfiguration(index uint64, configuration ClusterInfo) {
 	m.configurations = append(m.configurations, configuration)
 }
 

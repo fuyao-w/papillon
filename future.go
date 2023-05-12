@@ -102,21 +102,21 @@ func (a *appendEntriesFuture) Request() *AppendEntryRequest {
 	return a.req
 }
 
-type configurationChangeFuture struct {
+type clusterChangeFuture struct {
 	LogFuture
-	req *configurationChangeRequest
+	req *clusterChangeRequest
 }
 
-type configurationChangeCommend uint64
+type clusterChangeCommend uint64
 
 const (
-	addServer configurationChangeCommend = iota + 1
+	addServer clusterChangeCommend = iota + 1
 	removeServer
 	updateServer
 )
 
-type configurationChangeRequest struct {
-	command   configurationChangeCommend
+type clusterChangeRequest struct {
+	command   clusterChangeCommend
 	peer      ServerInfo
 	pervIndex uint64
 }
@@ -128,7 +128,7 @@ type (
 		quorumCount uint
 		voteGranted uint
 		reportOnce  *sync.Once
-		stepDown    chan struct{}
+		stepDown    chan ServerID
 	}
 )
 
@@ -173,8 +173,8 @@ type clusterGetFuture struct {
 type bootstrapFuture struct {
 	defaultDeferResponse
 
-	// configuration is the proposed bootstrap configuration to apply.
-	configuration Configuration
+	// clusterInfo is the proposed bootstrap clusterInfo to apply.
+	clusterInfo ClusterInfo
 }
 
 type (

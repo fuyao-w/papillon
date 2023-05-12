@@ -207,7 +207,7 @@ func (s *FileSnapshotSink) writeMeta() error {
 	return nil
 }
 
-func (f *FileSnapshot) Create(version SnapShotVersion, index, term uint64, configuration Configuration, configurationIndex uint64, rpc RpcInterface) (SnapshotSink, error) {
+func (f *FileSnapshot) Create(version SnapShotVersion, index, term uint64, configuration ClusterInfo, configurationIndex uint64, rpc RpcInterface) (SnapshotSink, error) {
 	name := snapshotName(term, index)
 	snapshotDir := filepath.Join(f.dir, name+tmpFileSuffix)
 	if err := os.MkdirAll(snapshotDir, dirMode); err != nil {

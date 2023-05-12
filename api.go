@@ -12,7 +12,7 @@ var (
 	ErrNotFoundLog                     = customError{"not found log"}
 	ErrNotLeader                       = errors.New("not leader")
 	ErrCantBootstrap                   = errors.New("bootstrap only works on new clusters")
-	ErrIllegalConfiguration            = errors.New("illegal configuration")
+	ErrIllegalConfiguration            = errors.New("illegal clusterInfo")
 	ErrShutDown                        = errors.New("shut down")
 	ErrLeadershipTransferInProgress    = errors.New("leader ship transfer in progress")
 	// ErrAbortedByRestore is returned when a leader fails to commit a log
@@ -40,9 +40,9 @@ func (e customError) Is(err error) bool {
 	return e.Error() == err.Error()
 }
 
-func (r *Raft) BootstrapCluster(configuration Configuration) defaultFuture {
+func (r *Raft) BootstrapCluster(configuration ClusterInfo) defaultFuture {
 	future := &bootstrapFuture{
-		configuration: configuration,
+		clusterInfo: configuration,
 	}
 	future.init()
 	select {
@@ -98,16 +98,16 @@ func (r *Raft) VerifyLeader() Future[bool] {
 }
 
 // GetConfiguration 获取集群配置
-func (r *Raft) GetConfiguration() Configuration {
+func (r *Raft) GetConfiguration() ClusterInfo {
 	return r.configuration.Load()
 }
 
-func (r *Raft) requestClusterChange(req configurationChangeRequest, timeout time.Duration) IndexFuture {
+func (r *Raft) requestClusterChange(req clusterChangeRequest, timeout time.Duration) IndexFuture {
 	var tm <-chan time.Time
 	if timeout > 0 {
 		tm = time.After(timeout)
 	}
-	var ccf = &configurationChangeFuture{
+	var ccf = &clusterChangeFuture{
 		req: &req,
 	}
 	ccf.init()
@@ -122,14 +122,14 @@ func (r *Raft) requestClusterChange(req configurationChangeRequest, timeout time
 }
 
 func (r *Raft) AddServer(peer ServerInfo, prevIndex uint64, timeout time.Duration) IndexFuture {
-	return r.requestClusterChange(configurationChangeRequest{
+	return r.requestClusterChange(clusterChangeRequest{
 		command:   addServer,
 		peer:      peer,
 		pervIndex: prevIndex,
 	}, timeout)
 }
 func (r *Raft) RemoveServer(peer ServerInfo, prevIndex uint64, timeout time.Duration) IndexFuture {
-	return r.requestClusterChange(configurationChangeRequest{
+	return r.requestClusterChange(clusterChangeRequest{
 		command:   removeServer,
 		peer:      peer,
 		pervIndex: prevIndex,
@@ -137,7 +137,7 @@ func (r *Raft) RemoveServer(peer ServerInfo, prevIndex uint64, timeout time.Dura
 }
 
 func (r *Raft) UpdateServer(peer ServerInfo, prevIndex uint64, timeout time.Duration) IndexFuture {
-	return r.requestClusterChange(configurationChangeRequest{
+	return r.requestClusterChange(clusterChangeRequest{
 		command:   updateServer,
 		peer:      peer,
 		pervIndex: prevIndex,
@@ -251,7 +251,7 @@ func (r *Raft) RaftState() Future[string] {
 	fu := new(deferResponse[string])
 	fu.init()
 	r.commandCh <- &command{
-		enum:     commandRaftState,
+		enum:     commandRaftStats,
 		callback: fu,
 	}
 	return fu

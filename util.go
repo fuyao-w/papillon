@@ -114,9 +114,16 @@ func generateUUID() string {
 }
 
 // asyncNotify 不阻塞的给 chan 发送一个信号，并返回是否发送成功
-func asyncNotify[T any](ch chan T) bool {
+func asyncNotify[T any](ch chan T, signal ...T) bool {
 	select {
-	case ch <- Zero[T]():
+	case ch <- func() (t T) {
+		if len(signal) != 0 {
+			t = signal[0]
+		} else {
+			t = Zero[T]()
+		}
+		return
+	}():
 		return true
 	default:
 		return false

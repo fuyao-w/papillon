@@ -6,18 +6,18 @@ import (
 )
 
 type (
-	Configuration struct {
+	ClusterInfo struct {
 		Servers []ServerInfo
 	}
 	cluster struct {
-		latest      Configuration
+		latest      ClusterInfo
 		latestIndex uint64
-		commit      Configuration
+		commit      ClusterInfo
 		commitIndex uint64
 	}
 )
 
-func (c *Configuration) Clone() (copy Configuration) {
+func (c *ClusterInfo) Clone() (copy ClusterInfo) {
 	copy.Servers = append([]ServerInfo(nil), c.Servers...)
 	return
 }
@@ -37,7 +37,7 @@ func (c *cluster) stable() bool {
 }
 
 // hasVoter 判断一个节点是否有选举权
-func (c *Configuration) hasVoter(id ServerID) bool {
+func (c *ClusterInfo) hasVoter(id ServerID) bool {
 	for _, server := range c.Servers {
 		if server.ID == id {
 			return server.isVoter()
@@ -45,30 +45,30 @@ func (c *Configuration) hasVoter(id ServerID) bool {
 	}
 	return false
 }
-func DecodeConfiguration(data []byte) (c Configuration) {
+func DecodeCluster(data []byte) (c ClusterInfo) {
 	if err := json.Unmarshal(data, &c); err != nil {
-		panic(fmt.Errorf("failed to decode Configuration: %s ,%s", err, data))
+		panic(fmt.Errorf("failed to decode ClusterInfo: %s ,%s", err, data))
 	}
 	return
 }
-func EncodeConfiguration(c Configuration) (data []byte) {
+func EncodeCluster(c ClusterInfo) (data []byte) {
 	data, err := json.Marshal(c)
 	if err != nil {
-		panic(fmt.Errorf("failed to encode Configuration :%s", err))
+		panic(fmt.Errorf("failed to encode ClusterInfo :%s", err))
 	}
 	return
 }
-func (c *cluster) setCommit(index uint64, configuration Configuration) {
+func (c *cluster) setCommit(index uint64, configuration ClusterInfo) {
 	c.commitIndex = index
 	c.commit = configuration
 }
-func (c *cluster) setLatest(index uint64, configuration Configuration) {
+func (c *cluster) setLatest(index uint64, configuration ClusterInfo) {
 	c.latestIndex = index
 	c.latest = configuration
 }
 
 // validateConfiguration 校验配置是否合法 1. 可选举节点数大于 0 2. 节点不能重复
-func validateConfiguration(configuration Configuration) bool {
+func validateConfiguration(configuration ClusterInfo) bool {
 	var (
 		voter int
 		set   = map[ServerID]bool{}

@@ -17,7 +17,7 @@ func (s *State) String() string {
 	case ShutDown:
 		return "ShutDown"
 	default:
-		return "Unknown"
+		return unknown
 	}
 }
 

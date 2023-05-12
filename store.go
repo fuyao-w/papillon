@@ -37,5 +37,5 @@ type KVStorage interface {
 
 type ConfigurationStorage interface {
 	KVStorage
-	SetConfiguration(index uint64, configuration Configuration) error
+	SetConfiguration(index uint64, configuration ClusterInfo) error
 }

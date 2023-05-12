@@ -74,6 +74,50 @@ func (r *Raft) heartBeat(fr *replication) {
 	}
 }
 
+// sendLatestSnapshot 发送最新的快照
+func (r *Raft) sendLatestSnapshot(fr *replication) (stop bool) {
+	peer := fr.peer.Get()
+	r.logger.Infof("sendLatestSnapshot peer id :%s , addr:%s", peer.ID, peer.Addr)
+	list, err := r.snapshotStore.List()
+	if err != nil {
+		return false
+	}
+	if len(list) == 0 {
+		r.logger.Errorf("sendLatestSnapshot|snapshot not exist")
+		return
+	}
+	latestID := list[0].ID
+	meta, readCloser, err := r.snapshotStore.Open(latestID)
+	if err != nil {
+		r.logger.Errorf("sendLatestSnapshot|open :%s err :%s", latestID, err)
+		return
+	}
+	defer func() {
+		readCloser.Close()
+	}()
+	resp, err := r.rpc.InstallSnapShot(Ptr(fr.peer.Get()), &InstallSnapshotRequest{
+		RPCHeader:    r.buildRPCHeader(),
+		Term:         r.getCurrentTerm(),
+		SnapshotMeta: meta,
+	}, readCloser)
+	if err != nil {
+		r.logger.Errorf("sendLatestSnapshot|InstallSnapShot err :%s", err)
+		return
+	}
+	if resp.Term > r.getCurrentTerm() {
+		r.leaderLease(fr)
+		return true
+	}
+	if resp.Success {
+		fr.setNextIndex(meta.Index + 1)
+		r.updateMatchIndex(peer.ID, meta.Index)
+		r.logger.Debug("update next index ", fr.getNextIndex(), peer.ID)
+	}
+	fr.setLastContact()
+	fr.notifyAll(resp.Success)
+	return
+}
+
 // replicateTo 负责短连接的跟随者复制，如果 replication.nextIndex 到 latestIndex 之前有空洞，则发送快照
 func (r *Raft) replicateTo(fr *replication, latestIndex uint64) (stop bool) {
 	hasMore := func() bool {
@@ -103,7 +147,7 @@ func (r *Raft) replicateTo(fr *replication, latestIndex uint64) (stop bool) {
 			return
 		}
 		if resp.Term > r.getCurrentTerm() {
-			r.leaderLease(resp.Term, fr)
+			r.leaderLease(fr)
 			return true
 		}
 		fr.setLastContact()
@@ -138,7 +182,7 @@ func (r *Raft) processPipelineResult(fr *replication, pipeline AppendEntryPipeli
 				continue
 			}
 			if resp.Term > r.getCurrentTerm() {
-				r.leaderLease(resp.Term, fr)
+				r.leaderLease(fr)
 				return
 			}
 			fr.setLastContact()

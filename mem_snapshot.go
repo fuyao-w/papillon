@@ -61,7 +61,7 @@ func (m *memSnapshot) List() ([]*SnapShotMeta, error) {
 	return []*SnapShotMeta{m.latest.meta}, nil
 }
 
-func (m *memSnapshot) Create(version SnapShotVersion, index, term uint64, configuration Configuration, configurationIndex uint64, rpc RpcInterface) (SnapshotSink, error) {
+func (m *memSnapshot) Create(version SnapShotVersion, index, term uint64, configuration ClusterInfo, configurationIndex uint64, rpc RpcInterface) (SnapshotSink, error) {
 	m.Lock()
 	defer m.Unlock()
 	sink := memSnapshotSink{

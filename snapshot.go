@@ -10,7 +10,7 @@ type (
 	SnapshotStore interface {
 		Open(id string) (*SnapShotMeta, io.ReadCloser, error)
 		List() ([]*SnapShotMeta, error)
-		Create(version SnapShotVersion, index, term uint64, configuration Configuration, configurationIndex uint64, rpc RpcInterface) (SnapshotSink, error)
+		Create(version SnapShotVersion, index, term uint64, configuration ClusterInfo, configurationIndex uint64, rpc RpcInterface) (SnapshotSink, error)
 	}
 	SnapshotSink interface {
 		io.WriteCloser
@@ -24,7 +24,7 @@ type (
 		ID                 string
 		Index              uint64
 		Term               uint64
-		Configuration      Configuration
+		Configuration      ClusterInfo
 		ConfigurationIndex uint64
 		Size               int64
 	}
@@ -57,7 +57,11 @@ func (r *Raft) runSnapshot() {
 			if !r.shouldBuildSnapshot() {
 				continue
 			}
-			r.buildSnapshot()
+			if id, err := r.buildSnapshot(); err != nil {
+				r.logger.Info(r.localInfo.ID, "build snap err: ", err.Error())
+			} else {
+				r.logger.Info(r.localInfo.ID, "build snap succ ,id :", id)
+			}
 		}
 	}
 }

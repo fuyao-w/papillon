@@ -38,7 +38,7 @@ const (
 	commandVerifyLeader
 	commandConfigReload
 	commandLeadershipTransfer
-	commandRaftState
+	commandRaftStats
 )
 
 var channelCommand commandMap
@@ -51,7 +51,9 @@ func init() {
 			},
 		},
 		commandClusterGet: {
-			Leader: (*Raft).processClusterGet,
+			Leader:    (*Raft).processClusterGet,
+			Candidate: (*Raft).processClusterGet,
+			Follower:  (*Raft).processClusterGet,
 		},
 		commandLogApply: {
 			Leader: (*Raft).processLogApply,
@@ -76,10 +78,10 @@ func init() {
 		commandClusterChange: {
 			Leader: (*Raft).processClusterChange,
 		},
-		commandRaftState: {
-			Follower:  (*Raft).processRaftState,
-			Candidate: (*Raft).processRaftState,
-			Leader:    (*Raft).processRaftState,
+		commandRaftStats: {
+			Follower:  (*Raft).processRaftStats,
+			Candidate: (*Raft).processRaftStats,
+			Leader:    (*Raft).processRaftStats,
 		},
 	}
 }
@@ -125,12 +127,12 @@ func (r *Raft) processHeartBeatTimeout(warn func(...interface{})) {
 	case r.cluster.latestIndex == 0:
 		warn("no cluster members")
 	case r.cluster.stable() && !r.canVote(r.localInfo.ID):
-		warn("no part of stable Configuration, aborting election")
+		warn("no part of stable ClusterInfo, aborting election")
 	case r.canVote(r.localInfo.ID):
 		warn("heartbeat abortCh reached, starting election", "last-leader-addr", oldLeaderInfo.Addr, "last-leader-id", oldLeaderInfo.ID)
 		r.setCandidate()
 	default:
-		warn("heartbeat abortCh reached, not part of a stable Configuration or a non-voter, not triggering a leader election")
+		warn("heartbeat abortCh reached, not part of a stable ClusterInfo or a non-voter, not triggering a leader election")
 	}
 }
 
@@ -176,11 +178,11 @@ func (r *Raft) processBootstrap(item interface{}) {
 	var (
 		fu = item.(*bootstrapFuture)
 	)
-	if !fu.configuration.hasVoter(r.localInfo.ID) {
+	if !fu.clusterInfo.hasVoter(r.localInfo.ID) {
 		fu.fail(ErrNotVoter)
 		return
 	}
-	if !validateConfiguration(fu.configuration) {
+	if !validateConfiguration(fu.clusterInfo) {
 		fu.fail(ErrIllegalConfiguration)
 		return
 	}
@@ -196,8 +198,8 @@ func (r *Raft) processBootstrap(item interface{}) {
 	entry := &LogEntry{
 		Index:     1,
 		Term:      1,
-		Data:      EncodeConfiguration(fu.configuration),
-		Type:      LogConfiguration,
+		Data:      EncodeCluster(fu.clusterInfo),
+		Type:      LogCluster,
 		CreatedAt: time.Now(),
 	}
 	if err = r.logStore.SetLogs([]*LogEntry{entry}); err != nil {
@@ -226,7 +228,7 @@ func (r *Raft) processSnapshotRestore(item interface{}) {
 		return
 	}
 	if !r.cluster.stable() {
-		fu.fail(fmt.Errorf("cannot restore snapshot now, wait until the configuration entry at %v has been applied (have applied %v)",
+		fu.fail(fmt.Errorf("cannot restore snapshot now, wait until the clusterInfo entry at %v has been applied (have applied %v)",
 			r.cluster.latestIndex, r.cluster.commitIndex))
 		return
 	}
@@ -284,7 +286,7 @@ func (r *Raft) pickLatestPeer() *replication {
 		latest      *replication
 		latestIndex uint64
 	)
-	for _, info := range r.getLatestConfiguration() {
+	for _, info := range r.getLatestCluster() {
 		if !info.isVoter() {
 			continue
 		}
@@ -399,7 +401,6 @@ func (r *Raft) processVerifyLeader(item interface{}) {
 	var (
 		fu = item.(*verifyFuture)
 	)
-	// 先计算自己一票
 	fu.quorumCount = r.quorumSize()
 	fu.voteGranted = 0
 	fu.reportOnce = new(sync.Once)
@@ -415,7 +416,7 @@ func (r *Raft) processVerifyLeader(item interface{}) {
 // processClusterChange 集群配置更新，只能等到上次更新已提交后才可以开始新的变更
 func (r *Raft) processClusterChange(item interface{}) {
 	var (
-		fu = item.(*configurationChangeFuture)
+		fu = item.(*clusterChangeFuture)
 	)
 	if !r.cluster.stable() {
 		fu.fail(errors.New("no stable cluster"))
@@ -426,7 +427,7 @@ func (r *Raft) processClusterChange(item interface{}) {
 		return
 	}
 	if fu.req.pervIndex > 0 && r.cluster.latestIndex != fu.req.pervIndex {
-		fu.fail(errors.New("configuration index not match"))
+		fu.fail(errors.New("clusterInfo index not match"))
 		return
 	}
 	newConfiguration, err := r.clacNewConfiguration(fu.req)
@@ -436,8 +437,8 @@ func (r *Raft) processClusterChange(item interface{}) {
 	}
 	logFu := &LogFuture{
 		log: &LogEntry{
-			Data: EncodeConfiguration(newConfiguration),
-			Type: LogCommand,
+			Data: EncodeCluster(newConfiguration),
+			Type: LogCluster,
 		},
 	}
 	logFu.init()
@@ -448,23 +449,21 @@ func (r *Raft) processClusterChange(item interface{}) {
 	fu.success()
 }
 
-// processRaftState 获取 Raft 状态上下文
-func (r *Raft) processRaftState(item interface{}) {
+// processRaftStats 获取 Raft 状态上下文
+func (r *Raft) processRaftStats(item interface{}) {
 	var (
 		fu = item.(*deferResponse[string])
 	)
+	formatTime := func(t time.Time) string {
+		if t.IsZero() {
+			return "-"
+		}
+		return time.Now().Sub(t).String()
+	}
 	fu.responded(func() string {
 		snapshotTerm, snapshotIndex := r.getLatestSnapshot()
 		logTerm, logIndex := r.getLatestLog()
 		leader := r.leaderInfo.Get()
-		var (
-			lastContact []Tuple[ServerID, time.Time]
-			nextIndex   []Tuple[ServerID, uint64]
-		)
-		for id, repl := range r.leaderState.replicate {
-			lastContact = append(lastContact, BuildTuple(id, repl.lastContact.Get()))
-			nextIndex = append(nextIndex, BuildTuple(id, repl.getNextIndex()))
-		}
 		var m = map[string]interface{}{
 			"state":                 r.state.String(),
 			"current_term":          r.getCurrentTerm(),
@@ -472,13 +471,38 @@ func (r *Raft) processRaftState(item interface{}) {
 			"latest_log_index":      logIndex,
 			"latest_snapshot_term":  snapshotTerm,
 			"latest_snapshot_index": snapshotIndex,
+			"latest_cluster_index":  r.cluster.latestIndex,
+			"commit_cluster_index":  r.cluster.commitIndex,
+			"commit_cluster":        r.getLatestCluster(),
 			"commit_index":          r.getCommitIndex(),
 			"leader_id":             leader.ID,
 			"leader_addr":           leader.Addr,
 		}
-		if r.state == Leader {
+		switch r.state.Get() {
+		case Leader:
+			var (
+				lastContact = make(map[ServerID]string, len(r.leaderState.replicate))
+				nextIndex   = make(map[ServerID]uint64, len(r.leaderState.replicate))
+			)
+			for id, repl := range r.leaderState.replicate {
+				lastContact[id] = formatTime(repl.lastContact.Get())
+				nextIndex[id] = repl.getNextIndex()
+			}
 			m["last_contact"] = lastContact
 			m["next_index"] = nextIndex
+			m["num_peers"] = func() (count int) {
+				if !r.canVote(r.localInfo.ID) {
+					return 0
+				}
+				for _, server := range r.getLatestCluster() {
+					if server.isVoter() {
+						count++
+					}
+				}
+				return
+			}()
+		default:
+			m["last_contact"] = formatTime(r.getLastContact())
 		}
 		date, _ := json.MarshalIndent(m, "", "	")
 		return string(date)

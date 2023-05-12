@@ -14,7 +14,7 @@ func TestCreate(t *testing.T) {
 			ID:      "",
 			Index:   1,
 			Term:    1,
-			Configuration: Configuration{
+			Configuration: ClusterInfo{
 				[]ServerInfo{{
 					Voter, "aa", "xxx",
 				}},

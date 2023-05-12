@@ -60,7 +60,7 @@ func NewRaft(conf *Config,
 		lastApplied:          0,
 		currentTerm:          currentTerm,
 		conf:                 NewAtomicVal(conf),
-		configuration:        NewAtomicVal[Configuration](),
+		configuration:        NewAtomicVal[ClusterInfo](),
 		state:                0,
 		run:                  nil,
 		lastContact:          NewAtomicVal[time.Time](),
@@ -153,7 +153,7 @@ func (r *Raft) recoverSnapshot() (err error) {
 
 func shouldApply(log *LogEntry) bool {
 	switch log.Type {
-	case LogConfiguration, LogCommand, LogBarrier:
+	case LogCluster, LogCommand, LogBarrier:
 		return true
 	}
 	return false
@@ -209,7 +209,7 @@ func (r *Raft) applyLogToFsm(toIndex uint64, ready map[uint64]*LogFuture) {
 
 func (r *Raft) shouldBuildSnapshot() bool {
 	_, snapshotIndex := r.getLatestSnapshot()
-	logIndex, _ := r.logStore.LastIndex()
+	_, logIndex := r.getLatestLog()
 	return logIndex-snapshotIndex > r.Conf().SnapshotThreshold
 }
 func (r *Raft) buildSnapshot() (id string, err error) {
@@ -290,7 +290,6 @@ func (r *Raft) cycleFollower() {
 	doFollower := func() (stop bool) {
 		select {
 		case <-r.shutDown.C:
-			r.setShutDown()
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
 		case cmd := <-r.commandCh:
@@ -347,13 +346,13 @@ func (r *Raft) deleteLog(from, to uint64) error {
 }
 
 // saveConfiguration 从日志里更新集群配置，由于集群变更只允许单次一个节点的变更，所以当有新日志
-// 到来的时候就可以默认为原有的 latest Configuration 已经提交 ，该函数只能用于启东时恢复或者主线程更新
+// 到来的时候就可以默认为原有的 latest ClusterInfo 已经提交 ，该函数只能用于启东时恢复或者主线程更新
 func (r *Raft) saveConfiguration(entry *LogEntry) {
-	if entry.Type != LogConfiguration {
+	if entry.Type != LogCluster {
 		return
 	}
 	r.setCommitConfiguration(r.cluster.latestIndex, r.cluster.latest)
-	r.setLatestConfiguration(entry.Index, DecodeConfiguration(entry.Data))
+	r.setLatestConfiguration(entry.Index, DecodeCluster(entry.Data))
 }
 
 // storeEntries 持久化日志，需要校验 PrevLogIndex、PrevLogTerm 是否匹配
@@ -593,9 +592,9 @@ func (r *Raft) processVote(req *VoteRequest, cmd *RPC) {
 			Granted:   granted,
 		}
 	}()
-	if len(r.getLatestConfiguration()) > 0 {
+	if len(r.getLatestCluster()) > 0 {
 		if !r.inConfiguration(req.ID) {
-			r.logger.Warn("rejecting vote request since node is not in configuration",
+			r.logger.Warn("rejecting vote request since node is not in clusterInfo",
 				"from", req.Addr)
 			return
 		} else if !r.canVote(req.ID) {
@@ -606,9 +605,9 @@ func (r *Raft) processVote(req *VoteRequest, cmd *RPC) {
 	// 如果跟随者确认当前有合法领导人则直接拒绝，保持集群稳定
 	if info := r.leaderInfo.Get(); len(info.Addr) != 0 && info.Addr != req.Addr && !req.LeaderTransfer {
 		r.logger.Warn("rejecting vote request since we have a leader",
-			"from", req.Addr,
-			"leader", r.leaderInfo.Get().ID,
-			"leader-id", string(req.ID))
+			"from addr", req.Addr,
+			"from id", req.ID,
+			"leader", r.leaderInfo.Get().ID)
 		return
 	}
 	if req.Term < r.getCurrentTerm() {
@@ -677,7 +676,6 @@ func (r *Raft) cycleCandidate() {
 	doCandidate := func() (stop bool) {
 		select {
 		case <-r.shutDown.C:
-			r.setShutDown()
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
 		case cmd := <-r.commandCh:
@@ -709,10 +707,10 @@ func (r *Raft) cycleCandidate() {
 }
 
 func (r *Raft) setupLeaderState() {
-	servers := r.getLatestConfiguration()
+	servers := r.getLatestCluster()
 	r.leaderState.inflight = list.New()
 	r.leaderState.startIndex = r.getLatestIndex()
-	r.leaderState.stepDown = make(chan struct{})
+	r.leaderState.stepDown = make(chan ServerID, 1)
 	r.leaderState.replicate = make(map[ServerID]*replication, len(servers))
 	r.leaderState.matchIndex = make(map[ServerID]uint64)
 	for _, info := range servers {
@@ -767,7 +765,7 @@ func (r *Raft) onConfigurationUpdate() {
 	defer r.leaderState.matchLock.Unlock()
 	oldMatch := r.leaderState.matchIndex
 	r.leaderState.matchIndex = make(map[ServerID]uint64)
-	for _, info := range r.getLatestConfiguration() {
+	for _, info := range r.getLatestCluster() {
 		if info.isVoter() {
 			r.leaderState.matchIndex[info.ID] = oldMatch[info.ID]
 		}
@@ -785,10 +783,10 @@ func (r *Raft) buildAppendEntryReq(nextIndex, latestIndex uint64) (*AppendEntryR
 			Term:         r.getCurrentTerm(),
 			LeaderCommit: r.getCommitIndex(),
 		}
-		maxAppendEntries = r.Conf().MaxAppendEntries
 	)
+	latestIndex = Min(latestIndex, nextIndex+r.Conf().MaxAppendEntries-1)
 	setupLogEntries := func() (err error) {
-		latestIndex = Min(latestIndex, nextIndex+maxAppendEntries-1)
+
 		if latestIndex == 0 || nextIndex > latestIndex {
 			return nil
 		}
@@ -801,7 +799,7 @@ func (r *Raft) buildAppendEntryReq(nextIndex, latestIndex uint64) (*AppendEntryR
 		}
 		return nil
 	}
-
+	// prev log 即使不传递新日志也需要设置，因为需要让新加入集群的干净节点追赶进度
 	setupPrevLog := func() error {
 		var prevIndex uint64
 		if len(req.Entries) != 0 {
@@ -834,57 +832,9 @@ func (r *Raft) buildAppendEntryReq(nextIndex, latestIndex uint64) (*AppendEntryR
 }
 
 // leaderLease 领导人线程通知自己下台
-func (r *Raft) leaderLease(term uint64, fr *replication) {
-	r.logger.Infof("leader lease ", r.localInfo.ID, "from server id:", fr.peer.Get().ID)
-	r.setFollower()
-	r.setCurrentTerm(term)
-	asyncNotify(r.leaderState.stepDown)
+func (r *Raft) leaderLease(fr *replication) {
+	asyncNotify(r.leaderState.stepDown, fr.peer.Get().ID)
 	fr.notifyAll(false)
-}
-
-// sendLatestSnapshot 发送最新的快照
-func (r *Raft) sendLatestSnapshot(fr *replication) (stop bool) {
-	peer := fr.peer.Get()
-	r.logger.Infof("sendLatestSnapshot peer id :%s , addr:%s", peer.ID, peer.Addr)
-	list, err := r.snapshotStore.List()
-	if err != nil {
-		return false
-	}
-	if len(list) == 0 {
-		r.logger.Errorf("sendLatestSnapshot|snapshot not exist")
-		return
-	}
-	latestID := list[0].ID
-	meta, readCloser, err := r.snapshotStore.Open(latestID)
-	if err != nil {
-		r.logger.Errorf("sendLatestSnapshot|open :%s err :%s", latestID, err)
-		return
-	}
-	defer func() {
-		readCloser.Close()
-	}()
-	resp, err := r.rpc.InstallSnapShot(Ptr(fr.peer.Get()), &InstallSnapshotRequest{
-		RPCHeader:    r.buildRPCHeader(),
-		Term:         r.getCurrentTerm(),
-		SnapshotMeta: meta,
-	}, readCloser)
-	if err != nil {
-		r.logger.Errorf("sendLatestSnapshot|InstallSnapShot err :%s", err)
-		return
-	}
-	r.logger.Debugf("sendLatestSnapshot err :%s ,%v ,%d", err, resp.Success, meta.Index)
-	if resp.Term > r.getCurrentTerm() {
-		r.leaderLease(resp.Term, fr)
-		return true
-	}
-	if resp.Success {
-		fr.setNextIndex(meta.Index + 1)
-		r.updateMatchIndex(peer.ID, meta.Index)
-		r.logger.Debug("update next index ", fr.getNextIndex(), peer.ID)
-	}
-	fr.setLastContact()
-	fr.notifyAll(resp.Success)
-	return
 }
 
 // updateLatestCommit 更新最新的提交索引，并且回调 replication 的 verifyFuture 请求
@@ -908,7 +858,7 @@ func (r *Raft) reloadReplication() {
 		nextIndex = r.getLatestIndex() + 1
 	)
 	// 开启新的跟随者线程
-	for _, server := range r.getLatestConfiguration() {
+	for _, server := range r.getLatestCluster() {
 		set[server.ID] = true
 		if server.ID == r.localInfo.ID {
 			continue
@@ -978,28 +928,23 @@ func (r *Raft) clearLeaderState() {
 // checkLeadership 计算领导权
 func (r *Raft) checkLeadership() (leader bool, maxDiff time.Duration) {
 	var (
-		now          = time.Now()
-		quorumSize   = r.quorumSize()
-		leaseTimeout = r.Conf().LeaderLeaseTimeout
-		voteForCount uint
+		now               = time.Now()
+		quorumSize        = r.quorumSize()
+		leaseTimeout      = r.Conf().LeaderLeaseTimeout
+		voteForCount uint = 1
 	)
-	for _, peer := range r.getLatestConfiguration() {
-		if !peer.isVoter() {
+	for id, repl := range r.leaderState.replicate {
+		if !Ptr(repl.peer.Get()).isVoter() {
 			continue
 		}
-		if peer.ID == r.localInfo.ID {
-			voteForCount++
-			continue
-		}
-		diff := now.Sub(r.leaderState.replicate[peer.ID].lastContact.Get())
-		if diff <= leaseTimeout {
+		if diff := now.Sub(repl.lastContact.Get()); diff <= leaseTimeout {
 			voteForCount++
 			maxDiff = Max(diff, maxDiff)
 		} else {
 			if diff < 3*leaseTimeout {
-				r.logger.Warn("failed to contact", "server-id", peer.ID, "time", diff)
+				r.logger.Warn("failed to contact", "server-id", id, "time", diff)
 			} else {
-				r.logger.Debug("failed to contact", "server-id", peer.ID, "time", diff)
+				r.logger.Debug("failed to contact", "server-id", id, "time", diff)
 			}
 		}
 	}
@@ -1084,7 +1029,7 @@ func (r *Raft) processLeaderCommit() {
 	}
 	if stepDown {
 		if r.Conf().LeadershipLostShutDown {
-			r.setShutDown()
+			r.ShutDown()
 		} else {
 			r.setFollower()
 		}
@@ -1120,15 +1065,22 @@ func (r *Raft) hasExistTerm() (exist bool, err error) {
 	return
 }
 
-func (r *Raft) clacNewConfiguration(req *configurationChangeRequest) (newConfiguration Configuration, err error) {
-
+func (r *Raft) clacNewConfiguration(req *clusterChangeRequest) (newConfiguration ClusterInfo, err error) {
 	switch req.command {
+	case addServer:
+		for _, server := range r.getLatestCluster() {
+			if server.ID == req.peer.ID {
+				return ClusterInfo{}, errors.New("peer duplicate")
+			}
+			newConfiguration.Servers = append(newConfiguration.Servers, server)
+		}
+		newConfiguration.Servers = append(newConfiguration.Servers, req.peer)
 	case updateServer:
 		found := false
-		for _, server := range r.getLatestConfiguration() {
+		for _, server := range r.getLatestCluster() {
 			if server.ID == req.peer.ID {
 				if server.Suffrage == req.peer.Suffrage {
-					return Configuration{}, errors.New("suffrage no change")
+					return ClusterInfo{}, errors.New("suffrage no change")
 				}
 				server.Suffrage = req.peer.Suffrage
 				found = true
@@ -1136,19 +1088,11 @@ func (r *Raft) clacNewConfiguration(req *configurationChangeRequest) (newConfigu
 			newConfiguration.Servers = append(newConfiguration.Servers, server)
 		}
 		if !found {
-			return Configuration{}, errors.New("not found")
+			return ClusterInfo{}, errors.New("not found")
 		}
-	case addServer:
-		for _, server := range r.getLatestConfiguration() {
-			if server.ID == req.peer.ID {
-				return Configuration{}, errors.New("peer duplicate")
-			}
-			newConfiguration.Servers = append(newConfiguration.Servers, server)
-		}
-		newConfiguration.Servers = append(newConfiguration.Servers, req.peer)
 	case removeServer:
 		found := false
-		for _, server := range r.getLatestConfiguration() {
+		for _, server := range r.getLatestCluster() {
 			if server.ID == req.peer.ID {
 				found = true
 				continue
@@ -1157,7 +1101,7 @@ func (r *Raft) clacNewConfiguration(req *configurationChangeRequest) (newConfigu
 			}
 		}
 		if !found {
-			return Configuration{}, errors.New("not found")
+			return ClusterInfo{}, errors.New("not found")
 		}
 	}
 
@@ -1166,11 +1110,11 @@ func (r *Raft) clacNewConfiguration(req *configurationChangeRequest) (newConfigu
 
 // cycleLeader Leader 状态主线程
 func (r *Raft) cycleLeader() {
-	r.logger.Debug("cycle leader ", r.leaderInfo.Get().ID)
+	r.logger.Debug("cycle leader ", r.localInfo.ID)
 	r.setupLeaderState()
 	r.reloadReplication()
 	defer func() {
-		r.logger.Info("leave leader")
+		r.logger.Info("leave leader", r.localInfo.ID)
 		r.stopReplication()
 		r.clearLeaderState()
 		// 因为会把 LastContact 返回给 API 调用者，这里更新下时间避免跟随者状态获取的时间太旧
@@ -1185,8 +1129,6 @@ func (r *Raft) cycleLeader() {
 	leaderLoop := func() (stop bool) {
 		select {
 		case <-r.shutDown.C:
-			r.logger.Debug("shut down")
-			r.setShutDown()
 		case rpc := <-r.rpcCh:
 			r.processRPC(rpc)
 		case cmd := <-r.commandCh:
@@ -1200,8 +1142,8 @@ func (r *Raft) cycleLeader() {
 				r.logger.Infof("leader ship check fail, term :%d ,step down", r.getCurrentTerm())
 				r.setFollower()
 			}
-		case <-r.leaderState.stepDown:
-			r.logger.Infof("leader ship step down, term :%d", r.getCurrentTerm())
+		case id := <-r.leaderState.stepDown:
+			r.logger.Info("leader ship step down, term :", r.getCurrentTerm(), "notify from :", id)
 			r.setFollower()
 		}
 		return
@@ -1210,7 +1152,7 @@ func (r *Raft) cycleLeader() {
 }
 
 func (r *Raft) quorumSize() (c uint) {
-	for _, server := range r.getLatestConfiguration() {
+	for _, server := range r.getLatestCluster() {
 		if server.isVoter() {
 			c++
 		}
@@ -1221,7 +1163,7 @@ func (r *Raft) quorumSize() (c uint) {
 // launchElection 发起选举，只由 cycleCandidate 方法调用
 func (r *Raft) launchElection() chan *voteResult {
 	var (
-		list                = r.getLatestConfiguration()
+		list                = r.getLatestCluster()
 		lastTerm, lastIndex = r.getLatestEntry()
 		header              = r.buildRPCHeader()
 		currentTerm         = r.getCurrentTerm()

@@ -17,7 +17,7 @@ func TestRaft(t *testing.T) {
 	batchConn(rpc1.(*memRPC), rpc2.(*memRPC), rpc3.(*memRPC))
 	go func() {
 		time.Sleep(time.Second)
-		raft1.BootstrapCluster(Configuration{Servers: []ServerInfo{
+		raft1.BootstrapCluster(ClusterInfo{Servers: []ServerInfo{
 			{Voter, "1", "1"},
 			{Voter, "2", "2"},
 			//{Voter, "3", "3"},
@@ -27,12 +27,12 @@ func TestRaft(t *testing.T) {
 	http.Handle("/get", &getHandle{raftList})
 	http.Handle("/set", &setHandle{raftList})
 	http.Handle("/verify", &verifyHandle{raftList})
-	http.Handle("/config", &configGetHandle{raft1})
+	http.Handle("/config", &configGetHandle{raftList})
 	http.Handle("/get_log", &getLogHandle{raftList})
 	http.Handle("/leader_transfer", &leaderTransferHandle{raftList})
 	http.Handle("/snapshot", &snapshotHandle{raftList})
 	http.Handle("/restore", &userRestoreSnapshotHandle{raftList})
-	http.Handle("/add_peer", &addPeerHandle{raftList})
+	http.Handle("/add_peer", &reloadPeerHandle{raftList})
 	http.Handle("/raft_state", &raftGetHandle{raftList})
 	http.ListenAndServe("localhost:8080", nil)
 }
@@ -56,7 +56,7 @@ func buildRaft(localID string, rpc RpcInterface, store interface {
 		TrailingLogs:            1000,
 		ApplyBatch:              true,
 		LeadershipCatchUpRounds: 500,
-		//ShutdownOnRemove: false,
+		//LeadershipLostShutDown:  true,
 	}
 	if store == nil {
 		store = newMemoryStore()
@@ -98,7 +98,7 @@ type (
 		raftList []*Raft
 	}
 	configGetHandle struct {
-		*Raft
+		raftList []*Raft
 	}
 	getLogHandle struct {
 		raftList []*Raft
@@ -112,7 +112,7 @@ type (
 	userRestoreSnapshotHandle struct {
 		raftList []*Raft
 	}
-	addPeerHandle struct {
+	reloadPeerHandle struct {
 		raftList []*Raft
 	}
 
@@ -175,7 +175,12 @@ func (s *verifyHandle) ServeHTTP(writer http.ResponseWriter, request *http.Reque
 
 }
 func (s *configGetHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
-	cluster := s.Raft.GetConfiguration()
+	idx := cast.ToUint(request.URL.Query().Get("idx"))
+	if idx >= uint(len(s.raftList)) {
+		writer.Write([]byte("idx not exist"))
+		return
+	}
+	cluster := s.raftList[idx].getLatestCluster()
 	b, _ := json.Marshal(cluster)
 	writer.Write([]byte(b))
 
@@ -216,7 +221,7 @@ func (s *snapshotHandle) ServeHTTP(writer http.ResponseWriter, request *http.Req
 	b, _ := json.MarshalIndent(&meta, "", "    ")
 	writer.Write(b)
 }
-func (s *addPeerHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+func (s *reloadPeerHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	addr := request.URL.Query().Get("addr")
 	id := request.URL.Query().Get("id")
 	suffrage := request.URL.Query().Get("suffrage")

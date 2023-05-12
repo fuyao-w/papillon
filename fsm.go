@@ -33,10 +33,10 @@ func (r *Raft) runFSM() {
 		return false
 	}
 	processConfiguration := func(fu *LogFuture) {
-		if fu.log.Type != LogConfiguration || !canConfigurationStore {
+		if fu.log.Type != LogCluster || !canConfigurationStore {
 			return
 		}
-		configurationStore.SetConfiguration(fu.log.Index, DecodeConfiguration(fu.log.Data))
+		configurationStore.SetConfiguration(fu.log.Index, DecodeCluster(fu.log.Data))
 
 	}
 	applyBatch := func(futures []*LogFuture) {
