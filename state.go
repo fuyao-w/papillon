@@ -22,17 +22,11 @@ func (s *State) String() string {
 }
 
 const (
-	Follower State = iota
+	Follower State = iota + 1
 	Candidate
 	Leader
 	ShutDown
 )
-
-func newState() *State {
-	state := new(State)
-	state.set(Follower)
-	return state
-}
 
 func (s *State) set(newState State) {
 	atomic.StoreUint64((*uint64)(s), uint64(newState))

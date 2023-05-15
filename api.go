@@ -4,6 +4,8 @@ import (
 	"errors"
 	"io"
 	"time"
+
+	. "github.com/fuyao-w/common-util"
 )
 
 var (
@@ -14,6 +16,7 @@ var (
 	ErrCantBootstrap                   = errors.New("bootstrap only works on new clusters")
 	ErrIllegalConfiguration            = errors.New("illegal clusterInfo")
 	ErrShutDown                        = errors.New("shut down")
+	ErrNotStarted                      = errors.New("not started")
 	ErrLeadershipTransferInProgress    = errors.New("leader ship transfer in progress")
 	// ErrAbortedByRestore is returned when a leader fails to commit a log
 	// entry because it's been superseded by a user snapshot restore.
@@ -49,10 +52,15 @@ func (e customError) Is(err error) bool {
 }
 
 func (r *Raft) BootstrapCluster(configuration ClusterInfo) defaultFuture {
+
 	future := &bootstrapFuture{
 		clusterInfo: configuration,
 	}
 	future.init()
+	if r == nil || Ptr(r.state.Get()).String() == unknown {
+		future.fail(ErrNotStarted)
+		return future
+	}
 	select {
 	case <-r.shutDown.C:
 		future.fail(ErrShutDown)
@@ -81,6 +89,10 @@ func (r *Raft) apiApplyLog(entry *LogEntry, timeout time.Duration) ApplyFuture {
 		log: entry,
 	}
 	applyFuture.init()
+	if r == nil || Ptr(r.state.Get()).String() == unknown {
+		applyFuture.fail(ErrNotStarted)
+		return applyFuture
+	}
 	select {
 	case <-tm:
 		return &errFuture[nilRespFuture]{errors.New("apply log time out")}
@@ -96,6 +108,10 @@ func (r *Raft) apiApplyLog(entry *LogEntry, timeout time.Duration) ApplyFuture {
 func (r *Raft) VerifyLeader() Future[bool] {
 	vf := &verifyFuture{}
 	vf.init()
+	if r == nil || Ptr(r.state.Get()).String() == unknown {
+		vf.fail(ErrNotStarted)
+		return vf
+	}
 	select {
 	case <-r.shutDown.C:
 		vf.fail(ErrShutDown)
@@ -119,6 +135,10 @@ func (r *Raft) requestClusterChange(req clusterChangeRequest, timeout time.Durat
 		req: &req,
 	}
 	ccf.init()
+	if r == nil || Ptr(r.state.Get()).String() == unknown {
+		ccf.fail(ErrNotStarted)
+		return ccf
+	}
 	select {
 	case <-tm:
 		return &errFuture[nilRespFuture]{err: errors.New("apply log time out")}
@@ -155,6 +175,10 @@ func (r *Raft) UpdateServer(peer ServerInfo, prevIndex uint64, timeout time.Dura
 func (r *Raft) SnapShot() Future[OpenSnapShot] {
 	fu := &apiSnapshotFuture{}
 	fu.init()
+	if r == nil || Ptr(r.state.Get()).String() == unknown {
+		fu.fail(ErrNotStarted)
+		return fu
+	}
 	select {
 	case <-r.shutDown.C:
 		return &errFuture[OpenSnapShot]{ErrShutDown}
@@ -187,11 +211,15 @@ func (r *Raft) LeaderTransfer(id ServerID, address ServerAddr) defaultFuture {
 			Addr: address,
 		},
 	}
+	future.init()
+	if r == nil || Ptr(r.state.Get()).String() == unknown {
+		future.fail(ErrNotStarted)
+		return future
+	}
 	if len(id) > 0 && id == r.localInfo.ID {
 		future.fail(errors.New("can't transfer to itself"))
 		return future
 	}
-	future.init()
 	select {
 	case r.commandCh <- &command{enum: commandLeadershipTransfer, callback: future}:
 		return future
@@ -205,6 +233,9 @@ func (r *Raft) LeaderTransfer(id ServerID, address ServerAddr) defaultFuture {
 func (r *Raft) ReloadConfig(rc ReloadableConfig) error {
 	r.confReloadMu.Lock()
 	defer r.confReloadMu.Unlock()
+	if r == nil || Ptr(r.state.Get()).String() == unknown {
+		return ErrNotStarted
+	}
 	oldConf := *r.Conf()
 	newConf := rc.apply(oldConf)
 	ok, hint := ValidateConfig(&newConf)
@@ -229,6 +260,9 @@ func (r *Raft) ReStoreSnapshot(meta *SnapShotMeta, reader io.ReadCloser) error {
 		reader: reader,
 	}
 	fu.init()
+	if r == nil || Ptr(r.state.Get()).String() == unknown {
+		return ErrNotStarted
+	}
 	select {
 	case r.commandCh <- &command{enum: commandSnapshotRestore, callback: fu}:
 	case <-r.shutDown.C:
@@ -245,6 +279,12 @@ func (r *Raft) ReStoreSnapshot(meta *SnapShotMeta, reader io.ReadCloser) error {
 
 func (r *Raft) ShutDown() defaultFuture {
 	var resp *shutDownFuture
+	if r == nil || Ptr(r.state.Get()).String() == unknown {
+		fu := new(defaultDeferResponse)
+		fu.init()
+		fu.fail(ErrNotStarted)
+		return fu
+	}
 	r.shutDown.done(func(oldState bool) {
 		resp = new(shutDownFuture)
 		if !oldState {
@@ -258,6 +298,10 @@ func (r *Raft) ShutDown() defaultFuture {
 func (r *Raft) RaftState() Future[string] {
 	fu := new(deferResponse[string])
 	fu.init()
+	if r == nil || Ptr(r.state.Get()).String() == unknown {
+		fu.fail(ErrNotStarted)
+		return fu
+	}
 	r.commandCh <- &command{
 		enum:     commandRaftStats,
 		callback: fu,
@@ -269,6 +313,10 @@ func (r *Raft) ReadIndex(timeout time.Duration) Future[uint64] {
 	tm := genTimeoutCh(timeout)
 	fu := new(deferResponse[uint64])
 	fu.init()
+	if r == nil || Ptr(r.state.Get()).String() == unknown {
+		fu.fail(ErrNotStarted)
+		return fu
+	}
 	select {
 	case <-tm:
 		fu.fail(ErrTimeout)
@@ -286,6 +334,10 @@ func (r *Raft) Barrier(readIndex uint64, timeout time.Duration) Future[uint64] {
 		readIndex: readIndex,
 	}
 	fu.init()
+	if r == nil || Ptr(r.state.Get()).String() == unknown {
+		fu.fail(ErrNotStarted)
+		return fu
+	}
 	select {
 	case <-tm:
 		fu.fail(ErrTimeout)

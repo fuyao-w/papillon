@@ -110,7 +110,7 @@ func (m *MemoryStore) GetLog(index uint64) (log *LogEntry, err error) {
 		if ok {
 			log = deepcopy.Copy(l).(*LogEntry)
 		} else {
-			err = ErrKeyNotFound
+			err = ErrNotFoundLog
 		}
 	})
 	return

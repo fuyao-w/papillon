@@ -19,7 +19,7 @@ func TestRaft(t *testing.T) {
 		time.Sleep(time.Second)
 		raft1.BootstrapCluster(ClusterInfo{Servers: []ServerInfo{
 			{Voter, "1", "1"},
-			{Voter, "2", "2"},
+			//{Voter, "2", "2"},
 			//{Voter, "3", "3"},
 		}})
 	}()
@@ -50,7 +50,7 @@ func buildRaft(localID string, rpc RpcInterface, store interface {
 		HeartbeatTimeout:        time.Second * 2,
 		SnapshotInterval:        time.Second * 15,
 		ElectionTimeout:         time.Second * 5,
-		CommitTimeout:           time.Second,
+		CommitTimeout:           time.Millisecond * 50,
 		LeaderLeaseTimeout:      time.Second * 1,
 		MaxAppendEntries:        10,
 		SnapshotThreshold:       1000,

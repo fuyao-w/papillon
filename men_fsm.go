@@ -60,7 +60,9 @@ type memSnapshotContainer struct {
 }
 
 func (m *memFSM) Persist(sink SnapshotSink) error {
-	b, _ := json.Marshal(m.kv.Get())
+	fsm := m.kv.Lock()
+	defer m.kv.Unlock()
+	b, _ := json.Marshal(fsm)
 	c, _ := json.Marshal(memSnapshotContainer{
 		LastIndex: m.lastIndex,
 		LastTerm:  m.lastTerm,

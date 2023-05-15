@@ -373,7 +373,7 @@ func (r *Raft) storeEntries(req *AppendEntryRequest) ([]*LogEntry, error) {
 			log, err := r.logStore.GetLog(req.PrevLogIndex)
 			if err != nil {
 				if errors.Is(ErrNotFoundLog, err) {
-					r.logger.Errorf("not fround prev log ,idx :%d", req.PrevLogIndex)
+					r.logger.Errorf("not fround prev log ,idx : %d ,id : %s", req.PrevLogIndex, r.localInfo.ID)
 				}
 				return nil, err
 			}
@@ -731,12 +731,12 @@ func (r *Raft) stopReplication() {
 
 // recalculate 计算 commit index 必须在 leaderState 的锁里执行
 func (r *Raft) recalculate() uint64 {
-	list := make([]uint64, len(r.leaderState.matchIndex))
+	list := make([]uint64, 0, len(r.leaderState.matchIndex))
 	for _, idx := range r.leaderState.matchIndex {
 		list = append(list, idx)
 	}
 	SortSlice(list)
-	return list[len(list)>>1]
+	return list[(len(list)-1)/2]
 }
 func (l *leaderState) getCommitIndex() uint64 {
 	return atomic.LoadUint64(&l.commitIndex)
@@ -785,9 +785,8 @@ func (r *Raft) buildAppendEntryReq(nextIndex, latestIndex uint64) (*AppendEntryR
 			LeaderCommit: r.getCommitIndex(),
 		}
 	)
-	latestIndex = Min(latestIndex, nextIndex+r.Conf().MaxAppendEntries-1)
+	latestIndex = clacLatestIndex(nextIndex, latestIndex, r.Conf().MaxAppendEntries)
 	setupLogEntries := func() (err error) {
-
 		if latestIndex == 0 || nextIndex > latestIndex {
 			return nil
 		}
@@ -845,7 +844,7 @@ func (r *Raft) updateLatestCommit(fr *replication, entries []*LogEntry) {
 		last := entries[len(entries)-1]
 		fr.setNextIndex(last.Index + 1)
 		r.updateMatchIndex(peer.ID, last.Index)
-		if r.getCommitIndex()-fr.getNextIndex() < 50 {
+		if diff := r.getCommitIndex() - fr.getNextIndex(); diff > 0 && diff < 50 {
 			r.logger.Infof("peer :%s catch up", peer.ID)
 		}
 	}
@@ -945,7 +944,7 @@ func (r *Raft) checkLeadership() (leader bool, maxDiff time.Duration) {
 			if diff < 3*leaseTimeout {
 				r.logger.Warn("failed to contact", "server-id", id, "time", diff)
 			} else {
-				r.logger.Debug("failed to contact", "server-id", id, "time", diff)
+				r.logger.Debug("failed to contact too long", "server-id", id, "time", diff)
 			}
 		}
 	}
