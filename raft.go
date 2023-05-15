@@ -77,9 +77,10 @@ type (
 	StateChange struct {
 		Before, After State
 	}
+	// readOnly 跟踪只读请求，确保状态机已经应用完制定索引，用于实现线性一致性读
 	readOnly struct {
-		notifySet map[*readOnlyFuture]struct{}
-		request   chan *readOnlyFuture
+		notifySet map[*readOnlyFuture]struct{} // 待响应的只读请求，只由状态机线程处理
+		request   chan *readOnlyFuture         // 只读请求
 	}
 )
 
@@ -105,9 +106,12 @@ type (
 	}
 )
 
+// observe 将请求添加进 pending 集合
 func (r *readOnly) observe(future *readOnlyFuture) {
 	r.notifySet[future] = struct{}{}
 }
+
+// notify 回调集合中达到索引位置的请求
 func (r *readOnly) notify(index uint64) {
 	for future := range r.notifySet {
 		if future.readIndex <= index {
@@ -256,8 +260,8 @@ func (r *Raft) runState() {
 }
 
 func (r *Raft) setState(state State) {
-	before := r.state.Get()
-	r.state.set(state)
+	before := r.GetState()
+	r._setState(state)
 	overrideNotify(r.stateChangeCh, &StateChange{
 		Before: before,
 		After:  state,

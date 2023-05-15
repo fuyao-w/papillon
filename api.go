@@ -4,8 +4,6 @@ import (
 	"errors"
 	"io"
 	"time"
-
-	. "github.com/fuyao-w/common-util"
 )
 
 var (
@@ -57,7 +55,7 @@ func (r *Raft) BootstrapCluster(configuration ClusterInfo) defaultFuture {
 		clusterInfo: configuration,
 	}
 	future.init()
-	if r == nil || Ptr(r.state.Get()).String() == unknown {
+	if r == nil || r.GetState().String() == unknown {
 		future.fail(ErrNotStarted)
 		return future
 	}
@@ -89,7 +87,7 @@ func (r *Raft) apiApplyLog(entry *LogEntry, timeout time.Duration) ApplyFuture {
 		log: entry,
 	}
 	applyFuture.init()
-	if r == nil || Ptr(r.state.Get()).String() == unknown {
+	if r == nil || r.GetState().String() == unknown {
 		applyFuture.fail(ErrNotStarted)
 		return applyFuture
 	}
@@ -108,7 +106,7 @@ func (r *Raft) apiApplyLog(entry *LogEntry, timeout time.Duration) ApplyFuture {
 func (r *Raft) VerifyLeader() Future[bool] {
 	vf := &verifyFuture{}
 	vf.init()
-	if r == nil || Ptr(r.state.Get()).String() == unknown {
+	if r == nil || r.GetState().String() == unknown {
 		vf.fail(ErrNotStarted)
 		return vf
 	}
@@ -135,7 +133,7 @@ func (r *Raft) requestClusterChange(req clusterChangeRequest, timeout time.Durat
 		req: &req,
 	}
 	ccf.init()
-	if r == nil || Ptr(r.state.Get()).String() == unknown {
+	if r == nil || r.GetState().String() == unknown {
 		ccf.fail(ErrNotStarted)
 		return ccf
 	}
@@ -175,7 +173,7 @@ func (r *Raft) UpdateServer(peer ServerInfo, prevIndex uint64, timeout time.Dura
 func (r *Raft) SnapShot() Future[OpenSnapShot] {
 	fu := &apiSnapshotFuture{}
 	fu.init()
-	if r == nil || Ptr(r.state.Get()).String() == unknown {
+	if r == nil || r.GetState().String() == unknown {
 		fu.fail(ErrNotStarted)
 		return fu
 	}
@@ -204,7 +202,8 @@ func (r *Raft) LastApplied() uint64 {
 	return r.getLastApplied()
 }
 
-func (r *Raft) LeaderTransfer(id ServerID, address ServerAddr) defaultFuture {
+func (r *Raft) LeaderTransfer(id ServerID, address ServerAddr, timeout time.Duration) defaultFuture {
+	tm := genTimeoutCh(timeout)
 	future := &leadershipTransferFuture{
 		Peer: ServerInfo{
 			ID:   id,
@@ -212,7 +211,7 @@ func (r *Raft) LeaderTransfer(id ServerID, address ServerAddr) defaultFuture {
 		},
 	}
 	future.init()
-	if r == nil || Ptr(r.state.Get()).String() == unknown {
+	if r == nil || r.GetState().String() == unknown {
 		future.fail(ErrNotStarted)
 		return future
 	}
@@ -225,7 +224,7 @@ func (r *Raft) LeaderTransfer(id ServerID, address ServerAddr) defaultFuture {
 		return future
 	case <-r.shutDown.C:
 		return &errFuture[nilRespFuture]{ErrShutDown}
-	default:
+	case <-tm:
 		return &errFuture[nilRespFuture]{ErrEnqueueTimeout}
 	}
 }
@@ -233,7 +232,7 @@ func (r *Raft) LeaderTransfer(id ServerID, address ServerAddr) defaultFuture {
 func (r *Raft) ReloadConfig(rc ReloadableConfig) error {
 	r.confReloadMu.Lock()
 	defer r.confReloadMu.Unlock()
-	if r == nil || Ptr(r.state.Get()).String() == unknown {
+	if r == nil || r.GetState().String() == unknown {
 		return ErrNotStarted
 	}
 	oldConf := *r.Conf()
@@ -260,7 +259,7 @@ func (r *Raft) ReStoreSnapshot(meta *SnapShotMeta, reader io.ReadCloser) error {
 		reader: reader,
 	}
 	fu.init()
-	if r == nil || Ptr(r.state.Get()).String() == unknown {
+	if r == nil || r.GetState().String() == unknown {
 		return ErrNotStarted
 	}
 	select {
@@ -279,7 +278,7 @@ func (r *Raft) ReStoreSnapshot(meta *SnapShotMeta, reader io.ReadCloser) error {
 
 func (r *Raft) ShutDown() defaultFuture {
 	var resp *shutDownFuture
-	if r == nil || Ptr(r.state.Get()).String() == unknown {
+	if r == nil || r.GetState().String() == unknown {
 		fu := new(defaultDeferResponse)
 		fu.init()
 		fu.fail(ErrNotStarted)
@@ -298,7 +297,7 @@ func (r *Raft) ShutDown() defaultFuture {
 func (r *Raft) RaftState() Future[string] {
 	fu := new(deferResponse[string])
 	fu.init()
-	if r == nil || Ptr(r.state.Get()).String() == unknown {
+	if r == nil || r.GetState().String() == unknown {
 		fu.fail(ErrNotStarted)
 		return fu
 	}
@@ -313,7 +312,7 @@ func (r *Raft) ReadIndex(timeout time.Duration) Future[uint64] {
 	tm := genTimeoutCh(timeout)
 	fu := new(deferResponse[uint64])
 	fu.init()
-	if r == nil || Ptr(r.state.Get()).String() == unknown {
+	if r == nil || r.GetState().String() == unknown {
 		fu.fail(ErrNotStarted)
 		return fu
 	}
@@ -334,7 +333,7 @@ func (r *Raft) Barrier(readIndex uint64, timeout time.Duration) Future[uint64] {
 		readIndex: readIndex,
 	}
 	fu.init()
-	if r == nil || Ptr(r.state.Get()).String() == unknown {
+	if r == nil || r.GetState().String() == unknown {
 		fu.fail(ErrNotStarted)
 		return fu
 	}

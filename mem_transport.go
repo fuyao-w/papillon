@@ -3,6 +3,7 @@ package papillon
 import (
 	"container/list"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"time"
@@ -178,6 +179,10 @@ func (m *memRPC) doRpc(cmdType rpcType, peer *memRPC, request interface{}, reade
 	case peer.consumerCh <- cmd:
 		timeout = time.Now().Sub(now)
 	case <-time.After(timeout):
+		if cmdType == CmdAppendEntry {
+			fmt.Println("time out------")
+		}
+		return nil, errors.New("time out")
 	}
 
 	select {

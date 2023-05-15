@@ -531,7 +531,6 @@ func (r *Raft) processAppendEntry(req *AppendEntryRequest, cmd *RPC) {
 	var (
 		succ bool
 	)
-
 	defer func() {
 		cmd.Response <- &AppendEntryResponse{
 			RPCHeader:   r.buildRPCHeader(),
@@ -648,7 +647,7 @@ func (r *Raft) processVote(req *VoteRequest, cmd *RPC) {
 	}
 }
 func (r *Raft) cycle(state State, f func() (stop bool)) {
-	for r.state.Get() == state && !f() {
+	for r.GetState() == state && !f() {
 	}
 }
 
@@ -873,13 +872,13 @@ func (r *Raft) reloadReplication() {
 		fr := &replication{
 			nextIndex:     nextIndex,
 			peer:          NewLockItem(server),
-			stop:          make(chan bool),
+			stop:          make(chan bool, 1),
 			heartBeatStop: make(chan struct{}),
 			heartBeatDone: make(chan struct{}),
-			notifyCh:      make(chan struct{}),
+			notifyCh:      make(chan struct{}, 1),
 			done:          make(chan struct{}),
-			trigger:       make(chan *defaultDeferResponse),
-			lastContact:   NewLockItem[time.Time](),
+			trigger:       make(chan *defaultDeferResponse, 1),
+			lastContact:   NewLockItem(time.Now()),
 			notify:        NewLockItem(map[*verifyFuture]struct{}{}),
 		}
 		r.leaderState.replicate[server.ID] = fr
@@ -888,6 +887,8 @@ func (r *Raft) reloadReplication() {
 			func() { r.heartBeat(fr) },
 			func() { r.replicate(fr) },
 		)
+		// 立即触发心跳，防止领导权检查下台
+		asyncNotify(fr.notifyCh)
 	}
 	// 删除已经不在集群的跟随者线程
 	for _, repl := range r.leaderState.replicate {
@@ -1009,7 +1010,7 @@ func (r *Raft) processLeaderCommit() {
 	r.setCommitIndex(newCommitIndex)
 
 	if r.cluster.latestIndex > oldCommitIndex && r.cluster.latestIndex <= newCommitIndex {
-		r.logger.Infof("cluster stable")
+		r.logger.Info("cluster stable ,old :", oldCommitIndex, " new:", newCommitIndex)
 		r.setCommitConfiguration(r.cluster.latestIndex, r.cluster.latest)
 		if !r.canVote(r.localInfo.ID) { // 集群配置提交后，如果当前领导人不在集群内，则下台
 			stepDown = true
@@ -1114,11 +1115,11 @@ func (r *Raft) cycleLeader() {
 	r.setupLeaderState()
 	r.reloadReplication()
 	defer func() {
-		r.logger.Info("leave leader", r.localInfo.ID)
 		r.stopReplication()
 		r.clearLeaderState()
 		// 因为会把 LastContact 返回给 API 调用者，这里更新下时间避免跟随者状态获取的时间太旧
 		r.setLastContact()
+		r.logger.Info("leave leader", r.localInfo.ID)
 	}()
 	// 提交一个空日志，用于确认 commitIndex
 	future := &LogFuture{log: &LogEntry{Type: LogNoop}}

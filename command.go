@@ -107,7 +107,7 @@ func (r *Raft) processCommand(cmd *command) {
 	if !ok {
 		panic(fmt.Sprintf("command type :%d not register", cmd.enum))
 	}
-	state := r.state.Get()
+	state := r.GetState()
 	f, ok := cc[state]
 	if ok {
 		f(r, cmd.callback)
@@ -379,7 +379,7 @@ func (r *Raft) processReloadConfig(item interface{}) {
 		oldConf = item.(*Config)
 		newConf = r.Conf()
 	)
-	switch r.state.Get() {
+	switch r.GetState() {
 	case Follower:
 		if oldConf.HeartbeatTimeout != newConf.HeartbeatTimeout {
 			r.heartbeatTimeout = time.After(0)
@@ -396,7 +396,7 @@ func (r *Raft) processReloadConfig(item interface{}) {
 			r.electionTimeout = randomTimeout(newConf.ElectionTimeout)
 		}
 	default:
-		panic(fmt.Errorf("except state :%d ", r.state.Get()))
+		panic(fmt.Errorf("except state :%d ", r.GetState()))
 	}
 }
 
@@ -482,7 +482,7 @@ func (r *Raft) processRaftStats(item interface{}) {
 			"leader_id":             leader.ID,
 			"leader_addr":           leader.Addr,
 		}
-		switch r.state.Get() {
+		switch r.GetState() {
 		case Leader:
 			var (
 				lastContact = make(map[ServerID]string, len(r.leaderState.replicate))

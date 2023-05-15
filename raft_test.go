@@ -35,6 +35,7 @@ func TestRaft(t *testing.T) {
 	http.Handle("/add_peer", &reloadPeerHandle{raftList})
 	http.Handle("/raft_state", &raftGetHandle{raftList})
 	http.Handle("/read_only", &readOnlyHandle{raftList})
+	http.Handle("/read_index", &readIndexHandle{raftList})
 	http.ListenAndServe("localhost:8080", nil)
 }
 
@@ -130,7 +131,7 @@ type (
 
 func (g *leaderTransferHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	raft := getLeader(g.raftList...)
-	fu := raft.LeaderTransfer("", "")
+	fu := raft.LeaderTransfer("", "", 0)
 	_, err := fu.Response()
 	if err == nil {
 		writer.Write([]byte("succ"))
@@ -159,7 +160,7 @@ func (s *setHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request)
 	fu := raft.Apply(kvSchema{}.encode(key, value), time.Second)
 	_, err := fu.Response()
 	if err != nil {
-		writer.Write([]byte("fail" + err.Error()))
+		writer.Write([]byte("fail set handle " + err.Error()))
 	} else {
 		writer.Write([]byte("succ"))
 	}
@@ -175,7 +176,7 @@ func (s *verifyHandle) ServeHTTP(writer http.ResponseWriter, request *http.Reque
 	_, err := fu.Response()
 
 	if err != nil {
-		writer.Write([]byte("fail" + err.Error()))
+		writer.Write([]byte("fail" + err.Error() + " " + cast.ToString(idx)))
 	} else {
 		writer.Write([]byte("succ"))
 	}
@@ -272,6 +273,20 @@ func (s *raftGetHandle) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 	stat, _ := fu.Response()
 	writer.Write([]byte(stat))
 }
+func (s *readIndexHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	idx := cast.ToInt(request.URL.Query().Get("idx"))
+	if idx < 0 || idx >= len(s.raftList) {
+		writer.Write([]byte("param err"))
+		return
+	}
+	fu := s.raftList[idx].ReadIndex(0)
+	ri, err := fu.Response()
+	if err != nil {
+		writer.Write([]byte(err.Error()))
+	} else {
+		writer.Write([]byte(cast.ToString(ri)))
+	}
+}
 func (s *userRestoreSnapshotHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	//raft := getLeader(s.raftList...)
 	//snapshot := raft.snapShotStore
@@ -303,6 +318,10 @@ func (s *readOnlyHandle) ServeHTTP(writer http.ResponseWriter, request *http.Req
 	idx := cast.ToUint64(request.URL.Query().Get("idx"))
 	readIndex := cast.ToUint64(request.URL.Query().Get("index"))
 	fu := s.raftList[idx].Barrier(readIndex, 0)
-	i, _ := fu.Response()
-	writer.Write([]byte(cast.ToString(i)))
+	i, err := fu.Response()
+	if err != nil {
+		writer.Write([]byte(err.Error()))
+	} else {
+		writer.Write([]byte(cast.ToString(i)))
+	}
 }
