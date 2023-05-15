@@ -47,7 +47,7 @@ type (
 		apiSnapshotBuildCh   chan *apiSnapshotFuture // 生成快照
 		apiSnapshotRestoreCh chan *userRestoreFuture // 重新应用快照的时候不能接收新的日志，需要从 runState 线程触发
 		apiLogApplyCh        chan *LogFuture         // 日志提交请求，由于需要支持批量提交，所以单独提出来
-		commandCh            chan *command           // 对节点发起的命令，包括领导权验证等
+		commandCh            chan *command           // 对节点发起的命令，包括领导权验证等，不能有 buffer
 		stateChangeCh        chan *StateChange       // 状态切换时的通知
 		//-----组件------
 		rpc           RpcInterface  // RPC 组件

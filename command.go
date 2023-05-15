@@ -481,6 +481,7 @@ func (r *Raft) processRaftStats(item interface{}) {
 			"commit_index":          r.getCommitIndex(),
 			"leader_id":             leader.ID,
 			"leader_addr":           leader.Addr,
+			"fsm_pending":           len(r.fsmApplyCh) + len(r.fsmRestoreCh),
 		}
 		switch r.GetState() {
 		case Leader:
