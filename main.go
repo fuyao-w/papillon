@@ -54,11 +54,10 @@ func NewRaft(conf *Config,
 		conf.Logger.Errorf("init current term error :%s", err)
 		return nil, fmt.Errorf("recover current term err :%s", err)
 	}
-
 	raft := &Raft{
-		commitIndex:          0,
-		lastApplied:          0,
-		currentTerm:          currentTerm,
+		commitIndex:          new(atomic.Uint64),
+		lastApply:            new(atomic.Uint64),
+		currentTerm:          new(atomic.Uint64),
 		conf:                 NewAtomicVal(conf),
 		configuration:        NewAtomicVal[ClusterInfo](),
 		state:                0,
@@ -74,13 +73,15 @@ func NewRaft(conf *Config,
 		apiLogApplyCh:        make(chan *LogFuture),
 		commitCh:             make(chan struct{}, 1),
 		logger:               conf.Logger,
-		leaderState:          leaderState{},
+		leaderState:          leaderState{leadershipTransfer: new(atomic.Bool)},
 		stateChangeCh:        make(chan *StateChange, 1),
 		commandCh:            make(chan *command),
 		fsm:                  fsm,
 		fsmApplyCh:           make(chan []*LogFuture, 128),
 		fsmSnapshotCh:        make(chan *fsmSnapshotFuture),
 		fsmRestoreCh:         make(chan *restoreFuture, 64),
+		lastAppliedTerm:      new(atomic.Uint64),
+		lastAppliedIdx:       new(atomic.Uint64),
 		readOnly:             readOnly{notifySet: map[*readOnlyFuture]struct{}{}, request: make(chan *readOnlyFuture)},
 		apiSnapshotBuildCh:   make(chan *apiSnapshotFuture),
 		apiSnapshotRestoreCh: make(chan *userRestoreFuture),
@@ -89,7 +90,7 @@ func NewRaft(conf *Config,
 		logStore:             logStore,
 		snapshotStore:        snapshotStore,
 	}
-
+	raft.currentTerm.Store(currentTerm)
 	if err = raft.recoverSnapshot(); err != nil {
 		return nil, fmt.Errorf("recover snap shot|%s", err)
 	}
@@ -160,7 +161,7 @@ func shouldApply(log *LogEntry) bool {
 	return false
 }
 
-// applyLogToFsm 将 lastApplied 到 index 的日志应用到状态机
+// applyLogToFsm 将 lastApply 到 index 的日志应用到状态机
 func (r *Raft) applyLogToFsm(toIndex uint64, ready map[uint64]*LogFuture) {
 	if toIndex <= r.getLastApplied() {
 		return
@@ -657,7 +658,7 @@ func (r *Raft) setCurrentTerm(term uint64) {
 		panic(err)
 		return
 	}
-	atomic.StoreUint64(&r.currentTerm, term)
+	r.currentTerm.Store(term)
 }
 
 func (r *Raft) cycleCandidate() {
@@ -713,6 +714,7 @@ func (r *Raft) setupLeaderState() {
 	r.leaderState.stepDown = make(chan ServerID, 1)
 	r.leaderState.replicate = make(map[ServerID]*replication, len(servers))
 	r.leaderState.matchIndex = make(map[ServerID]uint64)
+	r.leaderState.commitIndex = new(atomic.Uint64)
 	for _, info := range servers {
 		if info.isVoter() {
 			r.leaderState.matchIndex[info.ID] = 0
@@ -738,10 +740,10 @@ func (r *Raft) recalculate() uint64 {
 	return list[(len(list)-1)/2]
 }
 func (l *leaderState) getCommitIndex() uint64 {
-	return atomic.LoadUint64(&l.commitIndex)
+	return l.commitIndex.Load()
 }
 func (l *leaderState) setCommitIndex(index uint64) {
-	atomic.StoreUint64(&l.commitIndex, index)
+	l.commitIndex.Store(index)
 }
 func (r *Raft) updateMatchIndex(id ServerID, latestIndex uint64) {
 	r.leaderState.matchLock.Lock()
@@ -922,7 +924,7 @@ func (r *Raft) clearLeaderState() {
 	r.leaderState.replicate = nil
 	r.leaderState.startIndex = 0
 	r.leaderState.matchIndex = nil
-	r.leaderState.commitIndex = 0
+	r.leaderState.commitIndex = nil
 	r.leaderState.stepDown = nil
 }
 

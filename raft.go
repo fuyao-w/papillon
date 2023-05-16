@@ -12,9 +12,9 @@ import (
 
 type (
 	Raft struct {
-		commitIndex   uint64                  // 集群已提交的日志，初始化为 0 只有再提交过日志后才可以更新
-		lastApplied   uint64                  // 已提交给状态机的最新 index , 注意：不代表状态机已经应用
-		currentTerm   uint64                  // 当前任期，需要持久化
+		commitIndex   *atomic.Uint64          // 集群已提交的日志，初始化为 0 只有再提交过日志后才可以更新
+		lastApply     *atomic.Uint64          // 已提交给状态机的最新 index , 注意：不代表状态机已经应用
+		currentTerm   *atomic.Uint64          // 当前任期，需要持久化
 		configuration *AtomicVal[ClusterInfo] // 集群配置的副本
 		conf          *AtomicVal[*Config]     // 参数配置信息
 		confReloadMu  sync.Mutex
@@ -38,11 +38,13 @@ type (
 		electionTimeout             <-chan time.Time // 由主线程设置
 		candidateFromLeaderTransfer bool             // 当前节点在领导权转移过程中
 		//-------fsm-----------
-		fsm           FSM                     // 状态机，日志提交后由此应用
-		fsmApplyCh    chan []*LogFuture       // 状态机线程的日志提交通知
-		fsmSnapshotCh chan *fsmSnapshotFuture // 从状态机取快照
-		fsmRestoreCh  chan *restoreFuture     // 通知状态机重新应用快照
-		readOnly      readOnly                // 跟踪只读查询的请求
+		fsm             FSM                     // 状态机，日志提交后由此应用
+		fsmApplyCh      chan []*LogFuture       // 状态机线程的日志提交通知
+		fsmSnapshotCh   chan *fsmSnapshotFuture // 从状态机取快照
+		fsmRestoreCh    chan *restoreFuture     // 通知状态机重新应用快照
+		readOnly        readOnly                // 跟踪只读查询的请求
+		lastAppliedIdx  *atomic.Uint64
+		lastAppliedTerm *atomic.Uint64
 		//-----API--------------------
 		apiSnapshotBuildCh   chan *apiSnapshotFuture // 生成快照
 		apiSnapshotRestoreCh chan *userRestoreFuture // 重新应用快照的时候不能接收新的日志，需要从 runState 线程触发
@@ -65,9 +67,9 @@ type (
 	}
 	// leaderState 领导人上下文
 	leaderState struct {
-		commitIndex        uint64                    // 通过计算副本得出的已提交索引，只能由新日志提交触发更新
+		commitIndex        *atomic.Uint64            // 通过计算副本得出的已提交索引，只能由新日志提交触发更新
 		startIndex         uint64                    // 记录任期开始时的最新一条索引，防止在日志提交的时候发生 commit index 回退
-		leadershipTransfer uint64                    // 是否发生领导权转移 1 ：是 ，0 ：否
+		leadershipTransfer *atomic.Bool              // 是否发生领导权转移 1 ：是 ，0 ：否
 		matchIndex         map[ServerID]uint64       // 每个跟随者对应的已复制的 index
 		replicate          map[ServerID]*replication // 所有的跟随者
 		inflight           *list.List                // 等待提交并应用到状态机的 LogFuture
@@ -201,25 +203,24 @@ func (r *Raft) waitShutDown() {
 
 }
 func (r *Raft) getCurrentTerm() uint64 {
-	return atomic.LoadUint64(&r.currentTerm)
+	return r.currentTerm.Load()
 }
 func (r *Raft) getLastApplied() uint64 {
-	return atomic.LoadUint64(&r.lastApplied)
+	return r.lastApply.Load()
 }
 
 func (r *Raft) setLastApplied(index uint64) {
-	atomic.StoreUint64(&r.lastApplied, index)
+	r.lastApply.Store(index)
 }
 func (l *leaderState) setupLeadershipTransfer(status bool) (succ bool) {
-	old, newVal := uint64(1), uint64(0)
+	old := true
 	if status {
-		old = 0
-		newVal = 1
+		old = false
 	}
-	return atomic.CompareAndSwapUint64(&l.leadershipTransfer, old, newVal)
+	return l.leadershipTransfer.CompareAndSwap(old, status)
 }
 func (l *leaderState) getLeadershipTransfer() (status bool) {
-	return atomic.LoadUint64(&l.leadershipTransfer) == 1
+	return l.leadershipTransfer.Load()
 }
 
 func (s *ServerInfo) isVoter() bool {
@@ -241,10 +242,10 @@ func (r *Raft) getLastContact() time.Time {
 }
 
 func (r *Raft) getCommitIndex() uint64 {
-	return atomic.LoadUint64(&r.commitIndex)
+	return r.commitIndex.Load()
 }
 func (r *Raft) setCommitIndex(commitIndex uint64) {
-	atomic.StoreUint64(&r.commitIndex, commitIndex)
+	r.commitIndex.Store(commitIndex)
 }
 
 // runState 运行主线程
