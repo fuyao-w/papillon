@@ -141,8 +141,8 @@ func (r *Raft) replicateTo(fr *replication, latestIndex uint64) (stop bool) {
 			return true
 		}
 		if len(req.Entries) > 0 {
-			r.logger.Debug("AppendEntries to id :", fr.peer.Get().ID, " next index:", fr.getNextIndex(),
-				" latestIndex:", latestIndex)
+			//r.logger.Debug("AppendEntries to id :", fr.peer.Get().ID, " next index:", fr.getNextIndex(),
+			//	" latestIndex:", latestIndex)
 		}
 		resp, err := r.rpc.AppendEntries(Ptr(fr.peer.Get()), req)
 		if err != nil {
@@ -156,8 +156,8 @@ func (r *Raft) replicateTo(fr *replication, latestIndex uint64) (stop bool) {
 		}
 		fr.setLastContact()
 		if len(req.Entries) > 0 {
-			r.logger.Debug("replicate to id:", fr.peer.Get().ID, ",latestIndex:", latestIndex, ",result:", resp.Succ,
-				",peer latest index", resp.LatestIndex)
+			//r.logger.Debug("replicate to id:", fr.peer.Get().ID, ",latestIndex:", latestIndex, ",result:", resp.Succ,
+			//	",peer latest index", resp.LatestIndex)
 		}
 		if resp.Succ {
 			r.updateLatestCommit(fr, req.Entries)

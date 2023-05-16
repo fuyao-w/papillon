@@ -29,7 +29,7 @@ func NewRaft(conf *Config,
 	if conf.Logger == nil {
 		conf.Logger = log.NewLogger()
 	}
-
+	logStore = NewCacheLog(logStore, conf.TrailingLogs)
 	lastIndex, err := logStore.LastIndex()
 	if err != nil {
 		if !errors.Is(ErrNotFoundLog, err) {
@@ -38,14 +38,14 @@ func NewRaft(conf *Config,
 		}
 	}
 	if lastIndex > 0 {
-		log, err := logStore.GetLog(lastIndex)
+		logEntry, err := logStore.GetLog(lastIndex)
 		if err != nil {
 			conf.Logger.Errorf("get lastLog error")
 			return nil, fmt.Errorf("recover last log err :%s", err)
 		}
 		_lastLog = lastLog{
-			index: log.Index,
-			term:  log.Term,
+			index: logEntry.Index,
+			term:  logEntry.Term,
 		}
 	}
 
@@ -326,23 +326,6 @@ func (r *Raft) heartBeatFastPath(cmd *RPC) bool {
 		return true
 	}
 	return false
-}
-
-func (r *Raft) deleteLog(from, to uint64) error {
-	pageSize := uint64(5)
-	for i := from; i < to; i += pageSize {
-		logs, err := r.logStore.GetLogRange(i, i+pageSize)
-		if err != nil {
-			return err
-		}
-		if err := r.logStore.DeleteRange(i, i+pageSize); err != nil {
-			return err
-		}
-		if len(logs) < 5 {
-			break
-		}
-	}
-	return nil
 }
 
 // saveConfiguration 从日志里更新集群配置，由于集群变更只允许单次一个节点的变更，所以当有新日志
