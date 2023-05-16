@@ -1,6 +1,8 @@
 package papillon
 
-import "io"
+import (
+	"io"
+)
 
 type FSM interface {
 	Apply(*LogEntry) interface{}

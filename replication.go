@@ -133,9 +133,6 @@ func (r *Raft) replicateTo(fr *replication, latestIndex uint64) (stop bool) {
 	latestIndex = clacLatestIndex(fr.getNextIndex(), latestIndex, r.Conf().MaxAppendEntries)
 	for {
 		req, err := r.buildAppendEntryReq(fr.getNextIndex(), latestIndex)
-		if latestIndex > 0 {
-			r.logger.Debug("buildAppendEntryReq", fr.getNextIndex(), latestIndex, len(req.Entries))
-		}
 		if err != nil {
 			if errors.Is(ErrNotFoundLog, err) {
 				return r.sendLatestSnapshot(fr)
