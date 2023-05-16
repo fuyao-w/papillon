@@ -9,7 +9,7 @@ import (
 func TestCreate(t *testing.T) {
 	Convey("create", t, func() {
 		content := []byte("a,b,c,d")
-		meta := &SnapShotMeta{
+		meta := &SnapshotMeta{
 			Version: 1,
 			ID:      "",
 			Index:   1,

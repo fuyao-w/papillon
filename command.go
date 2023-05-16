@@ -221,7 +221,7 @@ func (r *Raft) processBootstrap(item interface{}) {
 // 当前节点会基于最新的配置和日志索引创建快照，并且会把最新索引 + 1 。这样做的目的是更快的触发快照发送
 // 所有的集群副本最终在状态机中应用了两个命令集合：一个原有的 + 从外部引入的
 // 注意：这个请求执行后的最新快照索引和最新日志索引均是最新的。在下一次完整快照生成之前，如果我们重启节点，
-// 将会丢失最新快照索引 SnapShotMeta.Index 之前的所有日志。该命令仅应在崩溃恢复时使用
+// 将会丢失最新快照索引 SnapshotMeta.Index 之前的所有日志。该命令仅应在崩溃恢复时使用
 // TODO 可以在崩溃恢复后的下一次快照检查强制生成快照，尽量保证日志的安全
 func (r *Raft) processSnapshotRestore(item interface{}) {
 	var (

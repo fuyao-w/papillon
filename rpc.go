@@ -38,7 +38,7 @@ type (
 	// InstallSnapshotRequest 安装快照
 	InstallSnapshotRequest struct {
 		*RPCHeader
-		SnapshotMeta *SnapShotMeta
+		SnapshotMeta *SnapshotMeta
 		Term         uint64
 	}
 	InstallSnapshotResponse struct {

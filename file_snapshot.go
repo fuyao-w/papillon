@@ -48,7 +48,7 @@ type (
 		writer        *bufio.Writer
 	}
 	fileSnapshotMeta struct {
-		*SnapShotMeta
+		*SnapshotMeta
 		CRC []byte
 	}
 	bufferReader struct {
@@ -116,7 +116,7 @@ func (f *FileSnapshot) readMeta(id string) (meta *fileSnapshotMeta, err error) {
 	return
 }
 
-func (f *FileSnapshot) Open(id string) (*SnapShotMeta, io.ReadCloser, error) {
+func (f *FileSnapshot) Open(id string) (*SnapshotMeta, io.ReadCloser, error) {
 	meta, err := f.readMeta(id)
 	if err != nil {
 		return nil, nil, err
@@ -142,19 +142,19 @@ func (f *FileSnapshot) Open(id string) (*SnapShotMeta, io.ReadCloser, error) {
 	if _, err = file.Seek(0, 0); err != nil {
 		return nil, nil, err
 	}
-	return meta.SnapShotMeta, &bufferReader{
+	return meta.SnapshotMeta, &bufferReader{
 		buf:  bufio.NewReader(file),
 		file: file,
 	}, nil
 }
 
-func (f *FileSnapshot) List() (list []*SnapShotMeta, err error) {
+func (f *FileSnapshot) List() (list []*SnapshotMeta, err error) {
 	metaList, err := f.getSnapshots()
 	if err != nil {
 		return nil, err
 	}
 	for _, meta := range metaList {
-		list = append(list, meta.SnapShotMeta)
+		list = append(list, meta.SnapshotMeta)
 		if len(list) == f.retainCount {
 			break
 		}
@@ -207,7 +207,7 @@ func (s *FileSnapshotSink) writeMeta() error {
 	return nil
 }
 
-func (f *FileSnapshot) Create(version SnapShotVersion, index, term uint64, configuration ClusterInfo, configurationIndex uint64, rpc RpcInterface) (SnapshotSink, error) {
+func (f *FileSnapshot) Create(version SnapshotVersion, index, term uint64, configuration ClusterInfo, configurationIndex uint64, rpc RpcInterface) (SnapshotSink, error) {
 	name := snapshotName(term, index)
 	snapshotDir := filepath.Join(f.dir, name+tmpFileSuffix)
 	if err := os.MkdirAll(snapshotDir, dirMode); err != nil {
@@ -219,7 +219,7 @@ func (f *FileSnapshot) Create(version SnapShotVersion, index, term uint64, confi
 		noSync:        f.noSync,
 		parentPath:    f.dir,
 		meta: &fileSnapshotMeta{
-			SnapShotMeta: &SnapShotMeta{
+			SnapshotMeta: &SnapshotMeta{
 				Version:            version,
 				ID:                 name,
 				Index:              index,

@@ -38,13 +38,11 @@ type (
 		electionTimeout             <-chan time.Time // 由主线程设置
 		candidateFromLeaderTransfer bool             // 当前节点在领导权转移过程中
 		//-------fsm-----------
-		fsm             FSM                     // 状态机，日志提交后由此应用
-		fsmApplyCh      chan []*LogFuture       // 状态机线程的日志提交通知
-		fsmSnapshotCh   chan *fsmSnapshotFuture // 从状态机取快照
-		fsmRestoreCh    chan *restoreFuture     // 通知状态机重新应用快照
-		readOnly        readOnly                // 跟踪只读查询的请求
-		lastAppliedIdx  *atomic.Uint64
-		lastAppliedTerm *atomic.Uint64
+		fsm           FSM                     // 状态机，日志提交后由此应用
+		fsmApplyCh    chan []*LogFuture       // 状态机线程的日志提交通知
+		fsmSnapshotCh chan *fsmSnapshotFuture // 从状态机取快照
+		fsmRestoreCh  chan *restoreFuture     // 通知状态机重新应用快照
+		readOnly      readOnly                // 跟踪只读查询的请求
 		//-----API--------------------
 		apiSnapshotBuildCh   chan *apiSnapshotFuture // 生成快照
 		apiSnapshotRestoreCh chan *userRestoreFuture // 重新应用快照的时候不能接收新的日志，需要从 runState 线程触发

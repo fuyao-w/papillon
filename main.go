@@ -80,8 +80,6 @@ func NewRaft(conf *Config,
 		fsmApplyCh:           make(chan []*LogFuture, 128),
 		fsmSnapshotCh:        make(chan *fsmSnapshotFuture),
 		fsmRestoreCh:         make(chan *restoreFuture, 64),
-		lastAppliedTerm:      new(atomic.Uint64),
-		lastAppliedIdx:       new(atomic.Uint64),
 		readOnly:             readOnly{notifySet: map[*readOnlyFuture]struct{}{}, request: make(chan *readOnlyFuture)},
 		apiSnapshotBuildCh:   make(chan *apiSnapshotFuture),
 		apiSnapshotRestoreCh: make(chan *userRestoreFuture),
@@ -117,7 +115,7 @@ func (r *Raft) recoverCluster() (err error) {
 	return nil
 }
 
-func (r *Raft) recoverSnapshotByID(id string) (*SnapShotMeta, error) {
+func (r *Raft) recoverSnapshotByID(id string) (*SnapshotMeta, error) {
 	meta, readCloser, err := r.snapshotStore.Open(id)
 	if err != nil {
 		r.logger.Errorf("")

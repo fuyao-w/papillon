@@ -14,7 +14,7 @@ var (
 )
 
 // OpenSnapShot 用于 API 请求执行完快照后再需要的时候延迟打开快照
-type OpenSnapShot = func() (*SnapShotMeta, io.ReadCloser, error)
+type OpenSnapShot = func() (*SnapshotMeta, io.ReadCloser, error)
 
 // nilRespFuture Future 默认不需要返回值的类型
 type nilRespFuture = any
@@ -155,7 +155,7 @@ func (v *verifyFuture) vote(leadership bool) {
 
 type userRestoreFuture struct {
 	defaultDeferResponse
-	meta   *SnapShotMeta
+	meta   *SnapshotMeta
 	reader io.ReadCloser
 }
 

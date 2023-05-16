@@ -20,20 +20,23 @@ type BatchFSM interface {
 	BatchApply([]*LogEntry) []interface{}
 }
 
-func (r *Raft) setFsmLastApplied(log *LogEntry) {
-	r.lastAppliedTerm.Store(log.Term)
-	r.lastAppliedIdx.Store(log.Index)
-}
-
 // runFSM 状态机线程
 func (r *Raft) runFSM() {
-	batchFSM, canBatchApply := r.fsm.(BatchFSM)
-	configurationStore, canConfigurationStore := r.kvStore.(ConfigurationStorage)
+	var (
+		batchFSM, canBatchApply                   = r.fsm.(BatchFSM)
+		configurationStore, canConfigurationStore = r.kvStore.(ConfigurationStorage)
+		lastAppliedTerm, lastAppliedIdx           uint64
+	)
+
 	processConfiguration := func(fu *LogFuture) {
 		if fu.log.Type != LogCluster || !canConfigurationStore {
 			return
 		}
 		configurationStore.SetConfiguration(fu.log.Index, DecodeCluster(fu.log.Data))
+	}
+	setFsmLastApplied := func(log *LogEntry) {
+		lastAppliedIdx = log.Index
+		lastAppliedTerm = log.Term
 	}
 	for {
 		select {
@@ -44,27 +47,27 @@ func (r *Raft) runFSM() {
 			case canBatchApply:
 				applyBatch(futures, batchFSM, processConfiguration)
 				if len(futures) > 0 {
-					r.setFsmLastApplied(futures[len(futures)-1].log)
+					setFsmLastApplied(futures[len(futures)-1].log)
 				}
 			default:
 				for _, future := range futures {
 					applySingle(future, r.fsm, processConfiguration)
-					r.setFsmLastApplied(future.log)
+					setFsmLastApplied(future.log)
 				}
 			}
-			r.readOnly.notify(r.lastAppliedIdx.Load())
+			r.readOnly.notify(lastAppliedIdx)
 		case fu := <-r.fsmRestoreCh:
 			meta, err := r.recoverSnapshotByID(fu.ID)
 			fu.responded(nil, err)
 			if err == nil {
-				r.setFsmLastApplied(&LogEntry{Term: meta.Term, Index: meta.Index})
+				setFsmLastApplied(&LogEntry{Term: meta.Term, Index: meta.Index})
 			}
-			r.readOnly.notify(r.lastAppliedIdx.Load())
+			r.readOnly.notify(lastAppliedIdx)
 		case fu := <-r.fsmSnapshotCh:
-			r.processSnapshot(fu, r.lastAppliedTerm.Load(), r.lastAppliedIdx.Load())
+			r.processSnapshot(fu, lastAppliedTerm, lastAppliedIdx)
 		case fu := <-r.readOnly.request:
-			if fu.readIndex <= r.lastAppliedIdx.Load() {
-				fu.responded(r.lastAppliedIdx.Load(), nil)
+			if fu.readIndex <= lastAppliedIdx {
+				fu.responded(lastAppliedIdx, nil)
 				continue
 			}
 			r.readOnly.observe(fu)

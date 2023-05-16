@@ -17,7 +17,7 @@ func newMemSnapShot() *memSnapshot {
 }
 
 type memSnapshotSink struct {
-	meta *SnapShotMeta
+	meta *SnapshotMeta
 	buf  *bytes.Buffer
 }
 
@@ -39,7 +39,7 @@ func (m *memSnapshotSink) Cancel() error {
 	return nil
 }
 
-func (m *memSnapshot) Open(id string) (*SnapShotMeta, io.ReadCloser, error) {
+func (m *memSnapshot) Open(id string) (*SnapshotMeta, io.ReadCloser, error) {
 	m.Lock()
 	defer m.Unlock()
 	if !m.has {
@@ -52,20 +52,20 @@ func (m *memSnapshot) Open(id string) (*SnapShotMeta, io.ReadCloser, error) {
 	return m.latest.meta, io.NopCloser(buffer), nil
 }
 
-func (m *memSnapshot) List() ([]*SnapShotMeta, error) {
+func (m *memSnapshot) List() ([]*SnapshotMeta, error) {
 	m.Lock()
 	defer m.Unlock()
 	if !m.has {
 		return nil, nil
 	}
-	return []*SnapShotMeta{m.latest.meta}, nil
+	return []*SnapshotMeta{m.latest.meta}, nil
 }
 
-func (m *memSnapshot) Create(version SnapShotVersion, index, term uint64, configuration ClusterInfo, configurationIndex uint64, rpc RpcInterface) (SnapshotSink, error) {
+func (m *memSnapshot) Create(version SnapshotVersion, index, term uint64, configuration ClusterInfo, configurationIndex uint64, rpc RpcInterface) (SnapshotSink, error) {
 	m.Lock()
 	defer m.Unlock()
 	sink := memSnapshotSink{
-		meta: &SnapShotMeta{
+		meta: &SnapshotMeta{
 			Version:            version,
 			ID:                 snapshotName(term, index),
 			Index:              index,

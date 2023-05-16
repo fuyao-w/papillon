@@ -7,20 +7,23 @@ import (
 )
 
 type (
+	// SnapshotStore 快照存储的抽象，提供打开快照，创建快照，查询快照列表的能力
 	SnapshotStore interface {
-		Open(id string) (*SnapShotMeta, io.ReadCloser, error)
-		List() ([]*SnapShotMeta, error)
-		Create(version SnapShotVersion, index, term uint64, configuration ClusterInfo, configurationIndex uint64, rpc RpcInterface) (SnapshotSink, error)
+		Open(id string) (*SnapshotMeta, io.ReadCloser, error)
+		List() ([]*SnapshotMeta, error)
+		Create(version SnapshotVersion, index, term uint64, configuration ClusterInfo, configurationIndex uint64, rpc RpcInterface) (SnapshotSink, error)
 	}
+	// SnapshotSink 快照的抽象提供写入、取消写入、返回快照 ID 的能力
 	SnapshotSink interface {
 		io.WriteCloser
 		ID() string
 		Cancel() error
 	}
-	// SnapShotVersion 表示快照的版本，会在以后的快照结构变更的时候使用
-	SnapShotVersion uint64
-	SnapShotMeta    struct {
-		Version            SnapShotVersion
+	// SnapshotVersion 表示快照的版本，会在以后的快照结构变更的时候使用
+	SnapshotVersion uint64
+	// SnapshotMeta 快照元信息
+	SnapshotMeta struct {
+		Version            SnapshotVersion
 		ID                 string
 		Index              uint64
 		Term               uint64
@@ -31,7 +34,7 @@ type (
 )
 
 const (
-	SnapShotVersionDefault SnapShotVersion = iota + 1
+	SnapShotVersionDefault SnapshotVersion = iota + 1
 )
 
 func snapshotName(term, index uint64) string {
@@ -46,7 +49,7 @@ func (r *Raft) runSnapshot() {
 			return
 		case fu := <-r.apiSnapshotBuildCh:
 			id, err := r.buildSnapshot()
-			fn := func() (*SnapShotMeta, io.ReadCloser, error) {
+			fn := func() (*SnapshotMeta, io.ReadCloser, error) {
 				return r.snapshotStore.Open(id)
 			}
 			if err != nil {
@@ -58,9 +61,9 @@ func (r *Raft) runSnapshot() {
 				continue
 			}
 			if id, err := r.buildSnapshot(); err != nil {
-				r.logger.Info(r.localInfo.ID, "build snap err: ", err.Error())
+				r.logger.Info(r.localInfo.ID, "build snap fail: ", err.Error())
 			} else {
-				r.logger.Info(r.localInfo.ID, "build snap succ ,id :", id)
+				r.logger.Info(r.localInfo.ID, "build snap success ,id :", id)
 			}
 		}
 	}

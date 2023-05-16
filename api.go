@@ -253,7 +253,7 @@ func (r *Raft) ReloadConfig(rc ReloadableConfig) error {
 	return nil
 }
 
-func (r *Raft) ReStoreSnapshot(meta *SnapShotMeta, reader io.ReadCloser) error {
+func (r *Raft) ReStoreSnapshot(meta *SnapshotMeta, reader io.ReadCloser) error {
 	fu := &userRestoreFuture{
 		meta:   meta,
 		reader: reader,
