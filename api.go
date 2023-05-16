@@ -50,7 +50,6 @@ func (e customError) Is(err error) bool {
 }
 
 func (r *Raft) BootstrapCluster(configuration ClusterInfo) defaultFuture {
-
 	future := &bootstrapFuture{
 		clusterInfo: configuration,
 	}

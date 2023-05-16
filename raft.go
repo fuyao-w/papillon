@@ -69,6 +69,7 @@ type (
 		startIndex         uint64                    // 记录任期开始时的最新一条索引，防止在日志提交的时候发生 commit index 回退
 		leadershipTransfer *atomic.Bool              // 是否发生领导权转移 1 ：是 ，0 ：否
 		matchIndex         map[ServerID]uint64       // 每个跟随者对应的已复制的 index
+		matchList          []uint64                  // matchIndex 的 value 列表，用于减少内存分配
 		replicate          map[ServerID]*replication // 所有的跟随者
 		inflight           *list.List                // 等待提交并应用到状态机的 LogFuture
 		stepDown           chan ServerID             // 领导人下台通知

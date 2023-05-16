@@ -185,12 +185,12 @@ func (r *Raft) applyLogToFsm(toIndex uint64, ready map[uint64]*LogFuture) {
 	for i := fromIndex; i <= toIndex; i++ {
 		var fu *LogFuture
 		if fu = ready[i]; fu == nil {
-			log, err := r.logStore.GetLog(i)
+			logEntry, err := r.logStore.GetLog(i)
 			if err != nil {
 				panic(fmt.Errorf("apply Log to fsm,err :%s", err))
 				return
 			}
-			fu = &LogFuture{log: log}
+			fu = &LogFuture{log: logEntry}
 			fu.init()
 		}
 		if !shouldApply(fu.log) {
@@ -539,6 +539,7 @@ func (r *Raft) processAppendEntry(req *AppendEntryRequest, cmd *RPC) {
 		}
 	}()
 	if req.Term < r.getCurrentTerm() {
+		r.logger.Errorf("processAppendEntry reject cause term is small. peer:%d ,self:%d", req.Term, r.getCurrentTerm())
 		return
 	}
 	// 如果我们正在进行 leader transfer 则不用退回成跟随者，继续发起选举
@@ -718,6 +719,7 @@ func (r *Raft) setupLeaderState() {
 			r.leaderState.matchIndex[info.ID] = 0
 		}
 	}
+	r.leaderState.matchList = make([]uint64, len(r.leaderState.matchIndex))
 }
 
 func (r *Raft) stopReplication() {
@@ -730,7 +732,7 @@ func (r *Raft) stopReplication() {
 
 // recalculate 计算 commit index 必须在 leaderState 的锁里执行
 func (r *Raft) recalculate() uint64 {
-	list := make([]uint64, 0, len(r.leaderState.matchIndex))
+	list := r.leaderState.matchList[:0]
 	for _, idx := range r.leaderState.matchIndex {
 		list = append(list, idx)
 	}
@@ -924,6 +926,7 @@ func (r *Raft) clearLeaderState() {
 	r.leaderState.matchIndex = nil
 	r.leaderState.commitIndex = nil
 	r.leaderState.stepDown = nil
+	r.leaderState.matchList = nil
 }
 
 // checkLeadership 计算领导权
@@ -1008,7 +1011,6 @@ func (r *Raft) processLeaderCommit() {
 	)
 	//r.logger.Debug("commit index update :", newCommitIndex)
 	r.setCommitIndex(newCommitIndex)
-
 	if r.cluster.latestIndex > oldCommitIndex && r.cluster.latestIndex <= newCommitIndex {
 		r.logger.Info("cluster stable ,old :", oldCommitIndex, " new:", newCommitIndex)
 		r.setCommitConfiguration(r.cluster.latestIndex, r.cluster.latest)

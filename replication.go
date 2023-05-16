@@ -129,8 +129,8 @@ func clacNextIndex(nextIndex, peerLatestIndex uint64) uint64 {
 }
 
 // replicateTo 负责短连接的跟随者复制，如果 replication.nextIndex 到 latestIndex 之前有空洞，则发送快照
+// 短连接需要保证跟随者尽快追赶上进度，所以需要循环执行
 func (r *Raft) replicateTo(fr *replication, latestIndex uint64) (stop bool) {
-	latestIndex = clacLatestIndex(fr.getNextIndex(), latestIndex, r.Conf().MaxAppendEntries)
 	for {
 		req, err := r.buildAppendEntryReq(fr.getNextIndex(), latestIndex)
 		if err != nil {
@@ -141,7 +141,8 @@ func (r *Raft) replicateTo(fr *replication, latestIndex uint64) (stop bool) {
 			return true
 		}
 		if len(req.Entries) > 0 {
-			r.logger.Debug("AppendEntries to ", fr.peer.Get().ID, fr.getNextIndex(), latestIndex)
+			r.logger.Debug("AppendEntries to id :", fr.peer.Get().ID, " next index:", fr.getNextIndex(),
+				" latestIndex:", latestIndex)
 		}
 		resp, err := r.rpc.AppendEntries(Ptr(fr.peer.Get()), req)
 		if err != nil {
@@ -164,6 +165,7 @@ func (r *Raft) replicateTo(fr *replication, latestIndex uint64) (stop bool) {
 		} else {
 			fr.setNextIndex(clacNextIndex(fr.getNextIndex(), resp.LatestIndex))
 		}
+		// has more
 		select {
 		case <-fr.stop:
 			return true
@@ -197,7 +199,7 @@ func (r *Raft) processPipelineResult(fr *replication, pipeline AppendEntryPipeli
 				r.updateLatestCommit(fr, fu.Request().Entries)
 			} else {
 				fr.setNextIndex(clacNextIndex(fr.getNextIndex(), resp.LatestIndex))
-				r.logger.Debug("processPipelineResult", fr.getNextIndex(), fr.peer.Get().ID)
+				r.logger.Debug("processPipelineResult", fr.getNextIndex(), resp.LatestIndex, fr.peer.Get().ID)
 			}
 		}
 
@@ -227,9 +229,10 @@ func (r *Raft) pipelineReplicateTo(fr *replication, pipeline AppendEntryPipeline
 func (r *Raft) pipelineReplicateHelper(fr *replication) {
 	var (
 		finishCh, pipelineStopCh = make(chan struct{}), make(chan struct{})
+		ticker                   = time.NewTicker(r.Conf().CommitTimeout)
 	)
+	defer ticker.Stop()
 	fr.allowPipeline = false
-
 	peer := fr.peer.Get()
 	pipeline, err := r.rpc.AppendEntryPipeline(&peer)
 	if err != nil {
@@ -249,11 +252,10 @@ func (r *Raft) pipelineReplicateHelper(fr *replication) {
 				r.pipelineReplicateTo(fr, pipeline)
 			}
 			stop = true
-		case <-time.After(r.Conf().CommitTimeout):
+		case <-ticker.C: // trigger 有几率丢失通知(如果 rpc 延迟过大，可能会略过最新的通知)，所以通过定时任务作为补充
 			stop = r.pipelineReplicateTo(fr, pipeline)
 		case fu := <-fr.trigger:
-			stop = r.pipelineReplicateTo(fr, pipeline)
-			if fu != nil {
+			if stop = r.pipelineReplicateTo(fr, pipeline); fu != nil {
 				if stop {
 					fu.fail(errors.New("replication failed"))
 				} else {
@@ -292,7 +294,7 @@ func (r *Raft) replicateHelper(fr *replication) (stop bool) {
 	)
 	defer ticker.Stop()
 	defer func() {
-		r.logger.Info("replicateHelper stop", fr.peer.Get().ID, stop)
+		r.logger.Info("replicateHelper end ,id:", fr.peer.Get().ID, ", stop:", stop)
 	}()
 	for !stop && !fr.allowPipeline {
 		select {
@@ -301,7 +303,7 @@ func (r *Raft) replicateHelper(fr *replication) (stop bool) {
 				r.replicateTo(fr, r.getLatestIndex())
 			}
 			return true
-		case <-ticker.C: // 不一定一次就能复制完毕，所以需要一个定时任务主动推进进度
+		case <-ticker.C: // trigger 有几率丢失通知(如果 rpc 延迟过大，可能会略过最新的通知)，所以通过定时任务作为补充
 			stop = r.replicateTo(fr, r.getLatestIndex())
 		case fu := <-fr.trigger:
 			stop = r.replicateTo(fr, r.getLatestIndex())

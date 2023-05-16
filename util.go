@@ -113,7 +113,7 @@ func generateUUID() string {
 	)
 }
 
-// asyncNotify 不阻塞的给 chan 发送一个信号，并返回是否发送成功
+// asyncNotify 不阻塞的给 chan 发送一个信号，并返回是否发送成功。目标 chan 缓冲区长度至少为 1 以防止消息丢失
 func asyncNotify[T any](ch chan T, signal ...T) bool {
 	select {
 	case ch <- func() (t T) {
