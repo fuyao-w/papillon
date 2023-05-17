@@ -73,7 +73,7 @@ type (
 	rpcType byte
 	// RPC rpc 请求的封装
 	RPC struct {
-		CmdType  rpcType
+		RpcType  rpcType
 		Request  any
 		Response chan any
 		Reader   io.Reader // 链接读接口，安装快照的时候用

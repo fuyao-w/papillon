@@ -45,6 +45,7 @@ func buildRaft(localID string, rpc RpcInterface, store interface {
 }) (*Raft, RpcInterface) {
 
 	conf := &Config{
+		Debug:   true,
 		LocalID: localID,
 		//HeartBeatCycle:    time.Second * 2,
 		//MemberList:        nil,
@@ -269,9 +270,10 @@ func (s *raftGetHandle) ServeHTTP(writer http.ResponseWriter, request *http.Requ
 		writer.Write([]byte("param err"))
 		return
 	}
-	fu := s.raftList[idx].RaftState()
+	fu := s.raftList[idx].RaftStats()
 	stat, _ := fu.Response()
-	writer.Write([]byte(stat))
+	m, _ := json.MarshalIndent(stat, "", "		")
+	writer.Write([]byte(m))
 }
 func (s *readIndexHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	idx := cast.ToInt(request.URL.Query().Get("idx"))

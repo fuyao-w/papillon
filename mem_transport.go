@@ -70,7 +70,7 @@ type menAppendEntryPipeline struct {
 
 type memAppendEntriesInflight struct {
 	af  *appendEntriesFuture
-	cmd *RPC
+	rpc *RPC
 }
 
 func newMenAppendEntryPipeline(peer, rpc *memRPC) *menAppendEntryPipeline {
@@ -95,7 +95,7 @@ func (pipe *menAppendEntryPipeline) decodeResponse() {
 				timeoutCh = time.After(timeout)
 			}
 			select {
-			case rpcResp := <-inflight.cmd.Response:
+			case rpcResp := <-inflight.rpc.Response:
 				resp := rpcResp.(*AppendEntryResponse)
 				inflight.af.responded(resp, nil)
 				select {
@@ -126,7 +126,7 @@ func (pipe *menAppendEntryPipeline) AppendEntries(request *AppendEntryRequest) (
 	}
 
 	cmd := RPC{
-		CmdType:  CmdAppendEntry,
+		RpcType:  RpcAppendEntry,
 		Request:  request,
 		Response: make(chan interface{}, 1),
 	}
@@ -139,7 +139,7 @@ func (pipe *menAppendEntryPipeline) AppendEntries(request *AppendEntryRequest) (
 		return nil, ErrShutDown
 	}
 	select {
-	case pipe.inProgressCh <- &memAppendEntriesInflight{af: af, cmd: &cmd}:
+	case pipe.inProgressCh <- &memAppendEntriesInflight{af: af, rpc: &cmd}:
 	case <-pipe.shutDownCh:
 		return nil, ErrPipelineShutdown
 	}
@@ -168,25 +168,25 @@ func (m *memRPC) Consumer() <-chan *RPC {
 }
 func (m *memRPC) doRpc(cmdType rpcType, peer *memRPC, request interface{}, reader io.Reader) (interface{}, error) {
 	timeout := m.timeout
-	cmd := &RPC{
-		CmdType:  cmdType,
+	rpc := &RPC{
+		RpcType:  cmdType,
 		Request:  request,
 		Reader:   reader,
 		Response: make(chan interface{}),
 	}
 	now := time.Now()
 	select {
-	case peer.consumerCh <- cmd:
+	case peer.consumerCh <- rpc:
 		timeout = time.Now().Sub(now)
 	case <-time.After(timeout):
-		if cmdType == CmdAppendEntry {
+		if cmdType == RpcAppendEntry {
 			fmt.Println("time out------")
 		}
 		return nil, errors.New("time out")
 	}
 
 	select {
-	case resp := <-cmd.Response:
+	case resp := <-rpc.Response:
 		return resp, nil
 	case <-time.After(m.timeout):
 		return nil, errors.New("time out")
@@ -194,7 +194,7 @@ func (m *memRPC) doRpc(cmdType rpcType, peer *memRPC, request interface{}, reade
 }
 
 func (m *memRPC) VoteRequest(info *ServerInfo, request *VoteRequest) (*VoteResponse, error) {
-	resp, err := m.doRpc(CmdVoteRequest, m.getPeer(info.Addr), request, nil)
+	resp, err := m.doRpc(RpcVoteRequest, m.getPeer(info.Addr), request, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +202,7 @@ func (m *memRPC) VoteRequest(info *ServerInfo, request *VoteRequest) (*VoteRespo
 }
 
 func (m *memRPC) AppendEntries(info *ServerInfo, request *AppendEntryRequest) (*AppendEntryResponse, error) {
-	resp, err := m.doRpc(CmdAppendEntry, m.getPeer(info.Addr), request, nil)
+	resp, err := m.doRpc(RpcAppendEntry, m.getPeer(info.Addr), request, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +222,7 @@ func (m *memRPC) AppendEntryPipeline(info *ServerInfo) (AppendEntryPipeline, err
 
 func (m *memRPC) InstallSnapShot(info *ServerInfo, request *InstallSnapshotRequest, reader io.Reader) (*InstallSnapshotResponse, error) {
 	peer := m.getPeer(info.Addr)
-	resp, err := m.doRpc(CmdInstallSnapshot, peer, request, reader)
+	resp, err := m.doRpc(RpcInstallSnapshot, peer, request, reader)
 	if err != nil {
 		return nil, err
 	}
@@ -234,7 +234,7 @@ func (m *memRPC) SetHeartbeatFastPath(cb fastPath) {
 }
 
 func (m *memRPC) FastTimeout(info *ServerInfo, request *FastTimeoutRequest) (*FastTimeoutResponse, error) {
-	resp, err := m.doRpc(CmdFastTimeout, m.getPeer(info.Addr), request, nil)
+	resp, err := m.doRpc(RpcFastTimeout, m.getPeer(info.Addr), request, nil)
 	if err != nil {
 		return nil, err
 	}

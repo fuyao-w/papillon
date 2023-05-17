@@ -3,6 +3,8 @@ package papillon
 import (
 	"container/list"
 	"errors"
+	"expvar"
+	_ "expvar"
 	"fmt"
 	. "github.com/fuyao-w/common-util"
 	"github.com/fuyao-w/log"
@@ -98,7 +100,19 @@ func NewRaft(conf *Config,
 	raft.rpc.SetHeartbeatFastPath(raft.heartBeatFastPath)
 	raft.setFollower()
 	raft.goFunc(raft.runState, raft.runFSM, raft.runSnapshot)
+	raft.debug()
 	return raft, nil
+}
+
+// debug 使用 expvar 包导出状态信息
+func (r *Raft) debug() {
+	if !r.Conf().Debug {
+		return
+	}
+	expvar.Publish("raft_stats_"+string(r.localInfo.ID), expvar.Func(func() any {
+		stats, _ := r.RaftStats().Response()
+		return stats
+	}))
 }
 
 // recoverCluster 从日志恢复集群配置
@@ -144,7 +158,7 @@ func (r *Raft) recoverSnapshot() (err error) {
 		return err
 	}
 	r.setLatestSnapshot(meta.Term, meta.Index)
-	r.setLastApplied(meta.Index)
+	r.setLastApply(meta.Index)
 	// 生成快照默认用稳定的配置，这里已提交和最新全部用一个就行
 	r.setCommitConfiguration(meta.ConfigurationIndex, meta.Configuration)
 	r.setLatestConfiguration(meta.ConfigurationIndex, meta.Configuration)
@@ -161,11 +175,11 @@ func shouldApply(log *LogEntry) bool {
 
 // applyLogToFsm 将 lastApply 到 index 的日志应用到状态机
 func (r *Raft) applyLogToFsm(toIndex uint64, ready map[uint64]*LogFuture) {
-	if toIndex <= r.getLastApplied() {
+	if toIndex <= r.getLastApply() {
 		return
 	}
 	var (
-		fromIndex  = r.getLastApplied() + 1
+		fromIndex  = r.getLastApply() + 1
 		maxAppend  = r.Conf().MaxAppendEntries
 		logFutures = make([]*LogFuture, 0, maxAppend)
 	)
@@ -204,7 +218,7 @@ func (r *Raft) applyLogToFsm(toIndex uint64, ready map[uint64]*LogFuture) {
 	}
 	applyBatch(logFutures)
 
-	r.setLastApplied(toIndex)
+	r.setLastApply(toIndex)
 }
 
 func (r *Raft) shouldBuildSnapshot() bool {
@@ -305,24 +319,24 @@ func (r *Raft) cycleFollower() {
 }
 
 // processRPC 处理 rpc 请求
-func (r *Raft) processRPC(cmd *RPC) {
-	switch req := cmd.Request.(type) {
+func (r *Raft) processRPC(rpc *RPC) {
+	switch req := rpc.Request.(type) {
 	case *VoteRequest:
-		r.processVote(req, cmd)
+		r.processVote(req, rpc)
 	case *AppendEntryRequest:
-		r.processAppendEntry(req, cmd)
+		r.processAppendEntry(req, rpc)
 	case *FastTimeoutRequest:
-		r.processFastTimeout(req, cmd)
+		r.processFastTimeout(req, rpc)
 	case *InstallSnapshotRequest:
-		r.processInstallSnapshot(req, cmd)
+		r.processInstallSnapshot(req, rpc)
 	}
 }
 
 // heartBeatFastPath 心跳的 fastPath ，不用经过主线程
-func (r *Raft) heartBeatFastPath(cmd *RPC) bool {
-	req, ok := cmd.Request.(*AppendEntryRequest)
-	if cmd.CmdType == CmdAppendEntry && ok && len(req.Entries) > 0 {
-		r.processAppendEntry(req, cmd)
+func (r *Raft) heartBeatFastPath(rpc *RPC) bool {
+	req, ok := rpc.Request.(*AppendEntryRequest)
+	if rpc.RpcType == RpcAppendEntry && ok && len(req.Entries) > 0 {
+		r.processAppendEntry(req, rpc)
 		return true
 	}
 	return false
@@ -399,18 +413,18 @@ func (r *Raft) storeEntries(req *AppendEntryRequest) ([]*LogEntry, error) {
 
 // processInstallSnapshot 复制远端的快照到本地，并且引用到状态机，这个方法使用在领导者复制过程中待复制日志在快照中的情况
 // 隐含意义就是跟随者的有效日志比领导者的快照旧
-func (r *Raft) processInstallSnapshot(req *InstallSnapshotRequest, cmd *RPC) {
+func (r *Raft) processInstallSnapshot(req *InstallSnapshotRequest, rpc *RPC) {
 	var (
 		succ bool
 		meta = req.SnapshotMeta
 	)
 	defer func() {
-		cmd.Response <- &InstallSnapshotResponse{
+		rpc.Response <- &InstallSnapshotResponse{
 			RPCHeader: r.buildRPCHeader(),
 			Success:   succ,
 			Term:      r.getCurrentTerm(),
 		}
-		io.Copy(io.Discard, cmd.Reader)
+		io.Copy(io.Discard, rpc.Reader)
 	}()
 	r.logger.Debug("processInstallSnapshot ", r.getCurrentTerm(), req.Term)
 	if req.Term < r.getCurrentTerm() {
@@ -432,7 +446,7 @@ func (r *Raft) processInstallSnapshot(req *InstallSnapshotRequest, cmd *RPC) {
 		r.logger.Errorf("processInstallSnapshot|crate err :%s", err)
 		return
 	}
-	reader := newCounterReader(cmd.Reader)
+	reader := newCounterReader(rpc.Reader)
 	written, err := io.Copy(sink, reader)
 	if err != nil {
 		r.logger.Errorf("processInstallSnapshot|Copy err :%s", err)
@@ -461,7 +475,7 @@ func (r *Raft) processInstallSnapshot(req *InstallSnapshotRequest, cmd *RPC) {
 		return
 	}
 	r.setLatestSnapshot(meta.Term, meta.Index)
-	r.setLastApplied(meta.Index)
+	r.setLastApply(meta.Index)
 
 	r.setCommitConfiguration(meta.Index, meta.Configuration)
 	r.setLatestConfiguration(meta.Index, meta.Configuration)
@@ -492,10 +506,10 @@ func (r *Raft) compactLog() error {
 }
 
 // processFastTimeout 跟随者快速超时成为候选人
-func (r *Raft) processFastTimeout(req *FastTimeoutRequest, cmd *RPC) {
+func (r *Raft) processFastTimeout(req *FastTimeoutRequest, rpc *RPC) {
 	var succ bool
 	defer func() {
-		cmd.Response <- &FastTimeoutResponse{
+		rpc.Response <- &FastTimeoutResponse{
 			RPCHeader: r.buildRPCHeader(),
 			Success:   succ,
 		}
@@ -509,12 +523,12 @@ func (r *Raft) processFastTimeout(req *FastTimeoutRequest, cmd *RPC) {
 }
 
 // processAppendEntry 处理日志复制，当日志长度为 0 的时候当做心跳使用
-func (r *Raft) processAppendEntry(req *AppendEntryRequest, cmd *RPC) {
+func (r *Raft) processAppendEntry(req *AppendEntryRequest, rpc *RPC) {
 	var (
 		succ bool
 	)
 	defer func() {
-		cmd.Response <- &AppendEntryResponse{
+		rpc.Response <- &AppendEntryResponse{
 			RPCHeader:   r.buildRPCHeader(),
 			Term:        r.getCurrentTerm(),
 			Succ:        succ,
@@ -566,10 +580,10 @@ func (r *Raft) processAppendEntry(req *AppendEntryRequest, cmd *RPC) {
 	r.setLastContact()
 }
 
-func (r *Raft) processVote(req *VoteRequest, cmd *RPC) {
+func (r *Raft) processVote(req *VoteRequest, rpc *RPC) {
 	var granted bool
 	defer func() {
-		cmd.Response <- &VoteResponse{
+		rpc.Response <- &VoteResponse{
 			RPCHeader: r.buildRPCHeader(),
 			Term:      r.getCurrentTerm(),
 			Granted:   granted,

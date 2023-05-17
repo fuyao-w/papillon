@@ -1,7 +1,6 @@
 package papillon
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	. "github.com/fuyao-w/common-util"
@@ -279,7 +278,7 @@ func (r *Raft) processSnapshotRestore(item interface{}) {
 
 	r.setLatestLog(r.getCurrentTerm(), index)
 	r.setLatestSnapshot(r.getCurrentTerm(), index)
-	r.setLastApplied(index)
+	r.setLastApply(index)
 	r.logger.Info("restored user snapshot", "index", index)
 	fu.success()
 }
@@ -456,7 +455,7 @@ func (r *Raft) processClusterChange(item interface{}) {
 // processRaftStats 获取 Raft 状态上下文
 func (r *Raft) processRaftStats(item interface{}) {
 	var (
-		fu = item.(*deferResponse[string])
+		fu = item.(*deferResponse[map[string]interface{}])
 	)
 	formatTime := func(t time.Time) string {
 		if t.IsZero() {
@@ -464,7 +463,7 @@ func (r *Raft) processRaftStats(item interface{}) {
 		}
 		return time.Now().Sub(t).String()
 	}
-	fu.responded(func() string {
+	fu.responded(func() map[string]interface{} {
 		snapshotTerm, snapshotIndex := r.getLatestSnapshot()
 		logTerm, logIndex := r.getLatestLog()
 		leader := r.leaderInfo.Get()
@@ -509,8 +508,7 @@ func (r *Raft) processRaftStats(item interface{}) {
 		default:
 			m["last_contact"] = formatTime(r.getLastContact())
 		}
-		date, _ := json.MarshalIndent(m, "", "	")
-		return string(date)
+		return m
 	}(), nil)
 }
 

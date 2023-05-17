@@ -13,8 +13,8 @@ var (
 	FutureErrNotLeader = errors.New("not leader")
 )
 
-// OpenSnapShot 用于 API 请求执行完快照后再需要的时候延迟打开快照
-type OpenSnapShot = func() (*SnapshotMeta, io.ReadCloser, error)
+// OpenSnapshot 用于 API 请求执行完快照后再需要的时候延迟打开快照
+type OpenSnapshot = func() (*SnapshotMeta, io.ReadCloser, error)
 
 // nilRespFuture Future 默认不需要返回值的类型
 type nilRespFuture = any
@@ -190,7 +190,7 @@ type (
 // apiSnapshotFuture is used for waiting on a user-triggered snapshot to
 // complete.
 type apiSnapshotFuture struct {
-	deferResponse[OpenSnapShot]
+	deferResponse[OpenSnapshot]
 }
 
 // restoreFuture is used for requesting an FSM to perform a

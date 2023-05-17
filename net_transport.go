@@ -137,12 +137,12 @@ func newNetConn(addr ServerAddr, conn net.Conn) *netConn {
 }
 func (n *NetTransport) VoteRequest(info *ServerInfo, request *VoteRequest) (*VoteResponse, error) {
 	var resp = new(VoteResponse)
-	return resp, n.genericRPC(info, CmdVoteRequest, request, resp)
+	return resp, n.genericRPC(info, RpcVoteRequest, request, resp)
 }
 
 func (n *NetTransport) AppendEntries(info *ServerInfo, request *AppendEntryRequest) (*AppendEntryResponse, error) {
 	var resp = new(AppendEntryResponse)
-	return resp, n.genericRPC(info, CmdAppendEntry, request, resp)
+	return resp, n.genericRPC(info, RpcAppendEntry, request, resp)
 }
 
 func (n *NetTransport) AppendEntryPipeline(info *ServerInfo) (AppendEntryPipeline, error) {
@@ -162,7 +162,7 @@ func (n *NetTransport) InstallSnapShot(info *ServerInfo, request *InstallSnapsho
 	if n.timeout > 0 {
 		conn.c.SetDeadline(time.Now().Add(Max(n.timeout*time.Duration(request.SnapshotMeta.Size/n.TimeoutScale), n.timeout)))
 	}
-	if err = n.sendRpc(conn, CmdInstallSnapshot, request); err != nil {
+	if err = n.sendRpc(conn, RpcInstallSnapshot, request); err != nil {
 		return nil, err
 	}
 	if _, err = io.Copy(conn.rw, r); err != nil {
@@ -187,7 +187,7 @@ func (n *NetTransport) SetHeartbeatFastPath(cb fastPath) {
 
 func (n *NetTransport) FastTimeout(info *ServerInfo, req *FastTimeoutRequest) (*FastTimeoutResponse, error) {
 	var resp = new(FastTimeoutResponse)
-	return resp, n.genericRPC(info, CmdFastTimeout, req, resp)
+	return resp, n.genericRPC(info, RpcFastTimeout, req, resp)
 }
 func newConnPool(maxSinglePoolNum int) *connPool {
 	p := &connPool{
@@ -372,7 +372,7 @@ type netPipeline struct {
 
 func (n *netPipeline) AppendEntries(request *AppendEntryRequest) (AppendEntriesFuture, error) {
 	af := newAppendEntriesFuture(request)
-	if err := n.trans.sendRpc(n.conn, CmdAppendEntry, af.req); err != nil {
+	if err := n.trans.sendRpc(n.conn, RpcAppendEntry, af.req); err != nil {
 		return nil, err
 	}
 	select {

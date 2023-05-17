@@ -204,11 +204,11 @@ func (r *Raft) waitShutDown() {
 func (r *Raft) getCurrentTerm() uint64 {
 	return r.currentTerm.Load()
 }
-func (r *Raft) getLastApplied() uint64 {
+func (r *Raft) getLastApply() uint64 {
 	return r.lastApply.Load()
 }
 
-func (r *Raft) setLastApplied(index uint64) {
+func (r *Raft) setLastApply(index uint64) {
 	r.lastApply.Store(index)
 }
 func (l *leaderState) setupLeadershipTransfer(status bool) (succ bool) {

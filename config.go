@@ -24,6 +24,7 @@ type Config struct {
 	LocalID                 string
 	LeadershipCatchUpRounds uint
 	LeadershipLostShutDown  bool
+	Debug                   bool // 开启后使用 expvar 包导出 raft 状态信息，可以使用 /debug/vars 路由进行访问
 }
 
 type ReloadableConfig struct {

@@ -41,18 +41,18 @@ func (c *CacheLog) GetLog(index uint64) (log *LogEntry, err error) {
 }
 
 func (c *CacheLog) GetLogRange(from, to uint64) (logs []*LogEntry, err error) {
-	buf := *c.buffer.Lock()
-	for i := from; i <= to; i++ {
-		if log := buf[i%c.capacity]; log != nil && log.Index == i {
-			logs = append(logs, log)
-		} else {
-			goto LOAD
+	c.buffer.Action(func(buf *[]*LogEntry) {
+		for i := from; i <= to; i++ {
+			if log := (*buf)[i%c.capacity]; log != nil && log.Index == i {
+				logs = append(logs, log)
+			} else {
+				return
+			}
 		}
+	})
+	if uint64(len(logs)) == to-from+1 {
+		return
 	}
-	c.buffer.Unlock()
-	return
-LOAD:
-	c.buffer.Unlock()
 	return c.store.GetLogRange(from, to)
 }
 
@@ -80,6 +80,5 @@ func (c *CacheLog) DeleteRange(from, to uint64) error {
 			}
 		}
 	})
-
 	return nil
 }

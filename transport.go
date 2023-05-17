@@ -9,27 +9,27 @@ import (
 
 func (c rpcType) String() string {
 	switch c {
-	case CmdVoteRequest:
+	case RpcVoteRequest:
 		return "VoteRequest"
-	case CmdAppendEntryPipeline:
+	case RpcAppendEntryPipeline:
 		return "AppendEntryPipeline"
-	case CmdAppendEntry:
+	case RpcAppendEntry:
 		return "AppendEntry"
-	case CmdInstallSnapshot:
+	case RpcInstallSnapshot:
 		return "InstallSnapshot"
-	case CmdFastTimeout:
+	case RpcFastTimeout:
 		return "FastTimeout"
 	default:
-		return "UNKNOWN"
+		return unknown
 	}
 }
 
 const (
-	CmdVoteRequest rpcType = iota + 1
-	CmdAppendEntry
-	CmdAppendEntryPipeline
-	CmdInstallSnapshot
-	CmdFastTimeout
+	RpcVoteRequest rpcType = iota + 1
+	RpcAppendEntry
+	RpcAppendEntryPipeline
+	RpcInstallSnapshot
+	RpcFastTimeout
 )
 const (
 	rpcMaxPipeline = 128
@@ -57,21 +57,21 @@ type (
 		Decode(reader *bufio.Reader) (rpcType, []byte, error)
 	}
 
-	CmdConvert interface {
+	RpcConvert interface {
 		Deserialization(data []byte, i interface{}) error
 		Serialization(i interface{}) (bytes []byte, err error)
 	}
 
-	// JsonCmdHandler 提供 json 的序列化能力
-	JsonCmdHandler struct{}
+	// JsonRpcHandler 提供 json 的序列化能力
+	JsonRpcHandler struct{}
 )
 
-var defaultCmdConverter = new(JsonCmdHandler)
+var defaultCmdConverter = new(JsonRpcHandler)
 
-func (j *JsonCmdHandler) Deserialization(data []byte, i interface{}) error {
+func (j *JsonRpcHandler) Deserialization(data []byte, i interface{}) error {
 	return json.Unmarshal(data, i)
 }
 
-func (j JsonCmdHandler) Serialization(i interface{}) (bytes []byte, err error) {
+func (j *JsonRpcHandler) Serialization(i interface{}) (bytes []byte, err error) {
 	return json.Marshal(i)
 }

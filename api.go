@@ -169,7 +169,7 @@ func (r *Raft) UpdateServer(peer ServerInfo, prevIndex uint64, timeout time.Dura
 	}, timeout)
 }
 
-func (r *Raft) SnapShot() Future[OpenSnapShot] {
+func (r *Raft) SnapShot() Future[OpenSnapshot] {
 	fu := &apiSnapshotFuture{}
 	fu.init()
 	if r == nil || r.GetState().String() == unknown {
@@ -178,7 +178,7 @@ func (r *Raft) SnapShot() Future[OpenSnapShot] {
 	}
 	select {
 	case <-r.shutDown.C:
-		return &errFuture[OpenSnapShot]{ErrShutDown}
+		return &errFuture[OpenSnapshot]{ErrShutDown}
 	case r.apiSnapshotBuildCh <- fu:
 		return fu
 	}
@@ -198,7 +198,7 @@ func (r *Raft) LatestIndex() uint64 {
 }
 
 func (r *Raft) LastApplied() uint64 {
-	return r.getLastApplied()
+	return r.getLastApply()
 }
 
 func (r *Raft) LeaderTransfer(id ServerID, address ServerAddr, timeout time.Duration) defaultFuture {
@@ -293,8 +293,8 @@ func (r *Raft) ShutDown() defaultFuture {
 	return resp
 }
 
-func (r *Raft) RaftState() Future[string] {
-	fu := new(deferResponse[string])
+func (r *Raft) RaftStats() Future[map[string]interface{}] {
+	fu := new(deferResponse[map[string]interface{}])
 	fu.init()
 	if r == nil || r.GetState().String() == unknown {
 		fu.fail(ErrNotStarted)

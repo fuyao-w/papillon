@@ -31,39 +31,29 @@ func (d *ServerProcessor) SetFastPath(cb fastPath) {
 // Do ServerProcessor 不关心上层协议，所以不用处理第一个参数（rpcType）
 func (d *ServerProcessor) Do(typ rpcType, req interface{}, reader io.Reader) (resp interface{}, err error) {
 	resCh := make(chan any, 1)
-	cmd := &RPC{
+	rpc := &RPC{
 		Request:  req,
 		Response: resCh,
 	}
 	switch typ {
-	case CmdAppendEntry:
+	case RpcAppendEntry:
 		request := req.(*AppendEntryRequest)
-		if len(request.Entries) == 0 && d.fastPath != nil && d.fastPath(cmd) {
+		if len(request.Entries) == 0 && d.fastPath != nil && d.fastPath(rpc) {
 			return <-resCh, nil
 		}
-	case CmdInstallSnapshot:
-		cmd.Reader = io.LimitReader(reader, req.(*InstallSnapshotRequest).SnapshotMeta.Size)
+	case RpcInstallSnapshot:
+		rpc.Reader = io.LimitReader(reader, req.(*InstallSnapshotRequest).SnapshotMeta.Size)
 	}
 
-	d.cmdChan <- cmd
+	d.cmdChan <- rpc
 	return <-resCh, nil
 }
 
 type processorOption struct {
 	Processor
-	CmdConvert
+	RpcConvert
 }
 
-func withProcessor(p Processor) func(opt *processorOption) {
-	return func(opt *processorOption) {
-		opt.Processor = p
-	}
-}
-func withCmdConvert(c CmdConvert) func(opt *processorOption) {
-	return func(opt *processorOption) {
-		opt.CmdConvert = c
-	}
-}
 func newProcessorProxy(cmdCh chan *RPC, options ...func(opt *processorOption)) Processor {
 	proxy := &ProcessorProxy{
 		Processor: &ServerProcessor{
@@ -77,8 +67,8 @@ func newProcessorProxy(cmdCh chan *RPC, options ...func(opt *processorOption)) P
 	if opt.Processor != nil {
 		proxy.Processor = opt.Processor
 	}
-	//if opt.CmdConvert != nil {
-	//	proxy.CmdConvert = opt.CmdConvert
+	//if opt.RpcConvert != nil {
+	//	proxy.RpcConvert = opt.RpcConvert
 	//}
 	return proxy
 }
@@ -88,13 +78,13 @@ func (p *ProcessorProxy) Do(cmdType rpcType, reqBytes interface{}, reader io.Rea
 	var req interface{}
 
 	switch cmdType {
-	case CmdVoteRequest:
+	case RpcVoteRequest:
 		req = new(VoteRequest)
-	case CmdAppendEntry:
+	case RpcAppendEntry:
 		req = new(AppendEntryRequest)
-	case CmdAppendEntryPipeline:
+	case RpcAppendEntryPipeline:
 		req = new(AppendEntryRequest)
-	case CmdInstallSnapshot:
+	case RpcInstallSnapshot:
 		req = new(InstallSnapshotRequest)
 	}
 	err = defaultCmdConverter.Deserialization(date, req)
