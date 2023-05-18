@@ -9,7 +9,7 @@ import (
 var (
 	ErrNotExist                        = errors.New("not exist")
 	ErrPipelineReplicationNotSupported = errors.New("pipeline replication not supported")
-	ErrNotFoundLog                     = customError{"not found log"}
+	ErrNotFound                        = customError{"not found"}
 	ErrNotLeader                       = errors.New("not leader")
 	ErrCantBootstrap                   = errors.New("bootstrap only works on new clusters")
 	ErrIllegalConfiguration            = errors.New("illegal clusterInfo")

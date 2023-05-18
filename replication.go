@@ -11,7 +11,7 @@ type (
 	// replication 领导人复制时每个跟随者维护的上下文状态
 	replication struct {
 		peer                               *LockItem[ServerInfo]                 // 跟随者的 server 信息
-		nextIndex                          uint64                                // 待复制给跟随者的下一条日志索引，初始化为领导人最新的日志索引
+		nextIndex                          *atomic.Uint64                        // 待复制给跟随者的下一条日志索引，初始化为领导人最新的日志索引
 		heartBeatStop, heartBeatDone, done chan struct{}                         // 心跳停止、复制线程结束、pipeline 返回结果处理线程结束
 		trigger                            chan *defaultDeferResponse            // 强制复制，不需要复制结果可以投递 nil
 		notifyCh                           chan struct{}                         // 强制心跳
@@ -25,10 +25,10 @@ type (
 )
 
 func (fr *replication) getNextIndex() uint64 {
-	return atomic.LoadUint64(&fr.nextIndex)
+	return fr.nextIndex.Load()
 }
 func (fr *replication) setNextIndex(newNextIndex uint64) {
-	atomic.StoreUint64(&fr.nextIndex, newNextIndex)
+	fr.nextIndex.Store(newNextIndex)
 }
 
 // notifyAll 同步所有的 verifyFuture 验证结果，然后清空 notify
@@ -77,7 +77,6 @@ func (r *Raft) heartBeat(fr *replication) {
 // sendLatestSnapshot 发送最新的快照
 func (r *Raft) sendLatestSnapshot(fr *replication) (stop bool) {
 	peer := fr.peer.Get()
-	r.logger.Infof("sendLatestSnapshot peer id :%s , addr:%s", peer.ID, peer.Addr)
 	list, err := r.snapshotStore.List()
 	if err != nil {
 		return false
@@ -134,7 +133,7 @@ func (r *Raft) replicateTo(fr *replication, latestIndex uint64) (stop bool) {
 	for {
 		req, err := r.buildAppendEntryReq(fr.getNextIndex(), latestIndex)
 		if err != nil {
-			if errors.Is(ErrNotFoundLog, err) {
+			if errors.Is(ErrNotFound, err) {
 				return r.sendLatestSnapshot(fr)
 			}
 			r.logger.Errorf("buildAppendEntryReq err :%s ,latest index", err, latestIndex)
@@ -207,6 +206,7 @@ func (r *Raft) processPipelineResult(fr *replication, pipeline AppendEntryPipeli
 }
 
 // pipelineReplicateTo 执行长链接复制
+// TODO 如果 pipeline 发送速度比响应速度更快，会出现跟随者校验 prev log index 失败的现象( nextIndex 连续递增 到 10 ，跟随者才把 5 复制完 ，然后心跳发送了 prev index 为 10 的请求)，此处需要实现一个失败退避机制
 func (r *Raft) pipelineReplicateTo(fr *replication, pipeline AppendEntryPipeline) (stop bool) {
 	req, err := r.buildAppendEntryReq(fr.getNextIndex(), r.getLatestIndex())
 	if err != nil {
@@ -221,6 +221,7 @@ func (r *Raft) pipelineReplicateTo(fr *replication, pipeline AppendEntryPipeline
 	// 因为请求结果在 processPipelineResult 函数线程异步接收，这里需要立即更新 nextIndex 防止重复发送
 	if n := len(req.Entries); n > 0 {
 		fr.setNextIndex(req.Entries[n-1].Index + 1)
+		r.logger.Debug("setNextIndex ", fr.getNextIndex(), fr.peer.Get().ID)
 	}
 	return
 }

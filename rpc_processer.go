@@ -86,6 +86,8 @@ func (p *ProcessorProxy) Do(cmdType rpcType, reqBytes interface{}, reader io.Rea
 		req = new(AppendEntryRequest)
 	case RpcInstallSnapshot:
 		req = new(InstallSnapshotRequest)
+	case RpcFastTimeout:
+		req = new(FastTimeoutRequest)
 	}
 	err = defaultCmdConverter.Deserialization(date, req)
 	if err != nil {

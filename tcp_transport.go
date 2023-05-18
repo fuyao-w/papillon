@@ -12,7 +12,7 @@ type TcpLayer struct {
 	advertise net.Addr
 }
 
-func NewTCPTransport(bindAddr string, maxPool int, timeout time.Duration) (*NetTransport, error) {
+func NewTcpTransport(bindAddr string, maxPool int, timeout time.Duration) (*NetTransport, error) {
 	return newTcpTransport(bindAddr, func(layer NetLayer) *NetTransport {
 		return NewNetTransport(&NetWorkTransportConfig{
 			ServerAddressProvider: nil,

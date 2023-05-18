@@ -2,8 +2,8 @@ package papillon
 
 import (
 	"encoding/json"
-	"fmt"
 	"github.com/boltdb/bolt"
+	. "github.com/fuyao-w/papillon"
 	dbStore "github.com/fuyao-w/raft-boltdb"
 	"github.com/spf13/cast"
 	"io"
@@ -12,22 +12,28 @@ import (
 	"time"
 )
 
+func newTransport(addr string) *NetTransport {
+	rpc, err := NewTcpTransport(addr, 10, time.Second)
+	if err != nil {
+		panic(err)
+	}
+	return rpc
+}
+func newStore(path string) *dbStore.Store {
+	db, err := dbStore.NewStore(path, bolt.DefaultOptions, true)
+	if err != nil {
+		panic(err)
+	}
+	return db
+}
 func TestRaft(t *testing.T) {
-	rpc1, err := NewTcpTransport("localhost:8001", 10, time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rpc2, err := NewTcpTransport("localhost:8002", 10, time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rpc3, err := NewTcpTransport("localhost:8003", 10, time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db1, err := dbStore.NewStore("./example/log_1.log", bolt.DefaultOptions, true)
-	db2, err := dbStore.NewStore("./example/log_2.log", bolt.DefaultOptions, true)
-	db3, err := dbStore.NewStore("./example/log_3.log", bolt.DefaultOptions, true)
+	rpc1 := newTransport("localhost:8001")
+	rpc2 := newTransport("localhost:8002")
+	rpc3 := newTransport("localhost:8003")
+
+	db1 := newStore("./log_1.log")
+	db2 := newStore("./log_2.log")
+	db3 := newStore("./log_3.log")
 	raft1, _ := buildRaft("1", rpc1, db1)
 	raft2, _ := buildRaft("2", rpc2, db2)
 	raft3, _ := buildRaft("3", rpc3, db3)
@@ -159,16 +165,16 @@ func (g *leaderTransferHandle) ServeHTTP(writer http.ResponseWriter, request *ht
 	}
 }
 func (g *getHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
-	key := request.URL.Query().Get("key")
-	raft := getLeader(g.raftList...)
-	fmt.Println("getleader", raft.localInfo.ID)
-	fsm := raft.fsm.(*memFSM)
-	val := fsm.getVal(key)
-	if len(val) > 0 {
-		writer.Write([]byte(val))
-	} else {
-		writer.Write([]byte("not found"))
-	}
+	//key := request.URL.Query().Get("key")
+	//raft := getLeader(g.raftList...)
+	//fmt.Println("getleader", raft.localInfo.ID)
+	//fsm := raft.fsm.(*memFSM)
+	//val := fsm.getVal(key)
+	//if len(val) > 0 {
+	//	writer.Write([]byte(val))
+	//} else {
+	//	writer.Write([]byte("not found"))
+	//}
 	writer.WriteHeader(200)
 }
 func (s *setHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -206,27 +212,27 @@ func (s *configGetHandle) ServeHTTP(writer http.ResponseWriter, request *http.Re
 		writer.Write([]byte("idx not exist"))
 		return
 	}
-	cluster := s.raftList[idx].getLatestCluster()
+	cluster := s.raftList[idx].GetConfiguration()
 	b, _ := json.Marshal(cluster)
 	writer.Write([]byte(b))
 
 }
 func (s *getLogHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
-	from := cast.ToUint64(request.URL.Query().Get("from"))
-	to := cast.ToUint64(request.URL.Query().Get("to"))
-	idx := cast.ToInt(request.URL.Query().Get("idx"))
-	if idx < 0 || idx > len(s.raftList)-1 {
-		writer.Write([]byte("params error"))
-		return
-	}
-	raft := s.raftList[idx]
-	logs, err := raft.logStore.GetLogRange(from, to)
-	if err != nil {
-		writer.Write([]byte("fail" + err.Error()))
-	} else {
-		b, _ := json.MarshalIndent(logs, "", "    ")
-		writer.Write([]byte(b))
-	}
+	//from := cast.ToUint64(request.URL.Query().Get("from"))
+	//to := cast.ToUint64(request.URL.Query().Get("to"))
+	//idx := cast.ToInt(request.URL.Query().Get("idx"))
+	//if idx < 0 || idx > len(s.raftList)-1 {
+	//	writer.Write([]byte("params error"))
+	//	return
+	//}
+	//raft := s.raftList[idx]
+	//logs, err := raft.logStore.GetLogRange(from, to)
+	//if err != nil {
+	//	writer.Write([]byte("fail" + err.Error()))
+	//} else {
+	//	b, _ := json.MarshalIndent(logs, "", "    ")
+	//	writer.Write([]byte(b))
+	//}
 
 }
 func (s *snapshotHandle) ServeHTTP(writer http.ResponseWriter, request *http.Request) {

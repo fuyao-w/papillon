@@ -34,7 +34,7 @@ func NewRaft(conf *Config,
 	logStore = NewCacheLog(logStore, conf.TrailingLogs)
 	lastIndex, err := logStore.LastIndex()
 	if err != nil {
-		if !errors.Is(ErrNotFoundLog, err) {
+		if !errors.Is(ErrNotFound, err) {
 			conf.Logger.Errorf("init index error")
 			return nil, fmt.Errorf("recover last log err :%s", err)
 		}
@@ -52,7 +52,7 @@ func NewRaft(conf *Config,
 	}
 
 	currentTerm, err := kvStore.GetUint64(KeyCurrentTerm)
-	if err != nil && !errors.Is(ErrKeyNotFound, err) {
+	if err != nil && !errors.Is(ErrNotFound, err) {
 		conf.Logger.Errorf("init current term error :%s", err)
 		return nil, fmt.Errorf("recover current term err :%s", err)
 	}
@@ -358,7 +358,7 @@ func (r *Raft) storeEntries(req *AppendEntryRequest) ([]*LogEntry, error) {
 		newEntries              []*LogEntry
 		latestTerm, latestIndex = r.getLatestEntry()
 	)
-
+	r.logger.Debug("storeEntries ", req.ID, req.PrevLogIndex)
 	// 校验日志是否匹配
 	// 只要有和 prevTerm、prevIndex 匹配的日志就行，不一定是最新的，日志可能会被领导人覆盖，lastIndex 可能回退
 	if req.PrevLogIndex > 0 { // 第一个日志 PrevLogIndex 为 0 ，所以这里加判断
@@ -368,8 +368,8 @@ func (r *Raft) storeEntries(req *AppendEntryRequest) ([]*LogEntry, error) {
 		} else {
 			log, err := r.logStore.GetLog(req.PrevLogIndex)
 			if err != nil {
-				if errors.Is(ErrNotFoundLog, err) {
-					r.logger.Errorf("not fround prev log ,idx : %d ,id : %s", req.PrevLogIndex, r.localInfo.ID)
+				if errors.Is(ErrNotFound, err) {
+					r.logger.Errorf("not found prev log ,idx : %d ,id : %s", req.PrevLogIndex, r.localInfo.ID)
 				}
 				return nil, err
 			}
@@ -389,7 +389,7 @@ func (r *Raft) storeEntries(req *AppendEntryRequest) ([]*LogEntry, error) {
 		}
 		log, err := r.logStore.GetLog(entry.Index)
 		if err != nil {
-			return nil, err // 小于 latestIndex 的不应该有空洞，所以不判断 ErrNotFoundLog
+			return nil, err // 小于 latestIndex 的不应该有空洞，所以不判断 ErrNotFound
 		}
 		if log.Term != entry.Term {
 			if err = r.logStore.DeleteRange(entry.Index, latestIndex); err != nil {
@@ -553,7 +553,7 @@ func (r *Raft) processAppendEntry(req *AppendEntryRequest, rpc *RPC) {
 	}
 	entries, err := r.storeEntries(req)
 	if err != nil {
-		r.logger.Debug("processAppendEntry|storeEntries err:", err)
+		r.logger.Error("processAppendEntry|storeEntries err:", err)
 		return
 	}
 
@@ -616,12 +616,12 @@ func (r *Raft) processVote(req *VoteRequest, rpc *RPC) {
 	}
 
 	candidateId, err := r.kvStore.Get(KeyLastVoteFor)
-	if err != nil && !errors.Is(ErrKeyNotFound, err) {
+	if err != nil && !errors.Is(ErrNotFound, err) {
 		r.logger.Errorf("get last voter for err :%s", err)
 		return
 	}
 	candidateTerm, err := r.kvStore.GetUint64(KeyLastVoteTerm)
-	if err != nil && !errors.Is(ErrKeyNotFound, err) {
+	if err != nil && !errors.Is(ErrNotFound, err) {
 		r.logger.Errorf("")
 		return
 	}
@@ -773,7 +773,7 @@ func (r *Raft) onConfigurationUpdate() {
 }
 
 // buildAppendEntryReq 构建 AppendEntryRequest ，填充 replication.nextIndex 到 latestIndex 之前的日志以及计算 PrevLogIndex 等信息
-// 如果日志有空洞则会返回 ErrNotFoundLog 错误，通知调用方应该发送快照对跟随者的日志进行覆盖
+// 如果日志有空洞则会返回 ErrNotFound 错误，通知调用方应该发送快照对跟随者的日志进行覆盖
 func (r *Raft) buildAppendEntryReq(nextIndex, latestIndex uint64) (*AppendEntryRequest, error) {
 	var (
 		snapshotTerm, snapshotIndex = r.getLatestSnapshot()
@@ -793,20 +793,15 @@ func (r *Raft) buildAppendEntryReq(nextIndex, latestIndex uint64) (*AppendEntryR
 			return err
 		}
 		if uint64(len(req.Entries)) != latestIndex-nextIndex+1 {
-			return ErrNotFoundLog
+			return ErrNotFound
 		}
 		return nil
 	}
 	// prev log 即使不传递新日志也需要设置，因为需要让新加入集群的干净节点追赶进度
 	setupPrevLog := func() error {
-		var prevIndex uint64
-		if len(req.Entries) != 0 {
-			prevIndex = req.Entries[0].Index - 1
-		} else {
-			prevIndex = latestIndex
-		}
+		var prevIndex = nextIndex - 1
 		switch {
-		case prevIndex == 0: // 第一个日志
+		case prevIndex == 0: //第一条日志
 		case prevIndex == snapshotIndex: // 上一个 index 正好是快照的最后一个日志，避免触发快照安装
 			req.PrevLogTerm, req.PrevLogIndex = snapshotTerm, snapshotIndex
 		default:
@@ -869,7 +864,7 @@ func (r *Raft) reloadReplication() {
 			continue
 		}
 		fr := &replication{
-			nextIndex:     nextIndex,
+			nextIndex:     new(atomic.Uint64),
 			peer:          NewLockItem(server),
 			stop:          make(chan bool, 1),
 			heartBeatStop: make(chan struct{}),
@@ -880,6 +875,7 @@ func (r *Raft) reloadReplication() {
 			lastContact:   NewLockItem(time.Now()),
 			notify:        NewLockItem(map[*verifyFuture]struct{}{}),
 		}
+		fr.setNextIndex(nextIndex)
 		r.leaderState.replicate[server.ID] = fr
 		r.logger.Info("begin replicate", server.ID, nextIndex)
 		r.goFunc(
@@ -1041,7 +1037,7 @@ func (r *Raft) hasExistTerm() (exist bool, err error) {
 	for _, f := range []func() (bool, error){
 		func() (bool, error) {
 			existTerm, err := r.kvStore.GetUint64(KeyCurrentTerm)
-			if errors.Is(ErrKeyNotFound, err) {
+			if errors.Is(ErrNotFound, err) {
 				err = nil
 			}
 			return existTerm > 0, err

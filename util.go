@@ -158,21 +158,21 @@ type Logger interface {
 }
 
 func newCounterReader(r io.Reader) *countingReader {
-	return &countingReader{reader: r}
+	return &countingReader{reader: r, count: new(atomic.Uint64)}
 }
 
 // countingReader 支持随时查询读取长度
 type countingReader struct {
 	reader io.Reader
-	count  int64
+	count  *atomic.Uint64
 }
 
 func (r *countingReader) Read(p []byte) (n int, err error) {
 	n, err = r.reader.Read(p)
-	atomic.AddInt64(&r.count, int64(n))
+	r.count.Add(1)
 	return
 }
 
-func (r *countingReader) Count() int64 {
-	return atomic.LoadInt64(&r.count)
+func (r *countingReader) Count() uint64 {
+	return r.count.Load()
 }

@@ -106,7 +106,7 @@ func (n *NetTransport) genericRPC(info *ServerInfo, cmdType rpcType, request, re
 		if err != nil {
 			conn.Close()
 			data, _ := json.Marshal(request)
-			n.logger.Infof("genericRPC errorx : %s , rpcType :%d , req :%s", err, cmdType, data)
+			n.logger.Infof("genericRPC error : %s , rpcType :%d , req :%s", err, cmdType, data)
 		} else {
 			n.connPoll.PutConn(conn)
 		}
@@ -340,13 +340,13 @@ func (n *NetTransport) handleConn(ctx context.Context, conn *netConn) {
 			cmdType, data, err := defaultPackageParser.Decode(conn.rw.Reader)
 			if err != nil {
 				if !errors.Is(err, io.EOF) {
-					n.logger.Errorf("processConnection|Decode errorx : %s\n", err)
+					n.logger.Errorf("processConnection|Decode error : %s\n", err)
 				}
 				return
 			}
 			respData, err := n.processor.Do(cmdType, data, conn.rw)
 			if err != nil {
-				n.logger.Errorf("NetTransport|processor errorx:%s", err)
+				n.logger.Errorf("NetTransport|processor error:%s", err)
 				return
 			}
 			if err = defaultPackageParser.Encode(conn.rw.Writer, cmdType, respData.([]byte)); err != nil {

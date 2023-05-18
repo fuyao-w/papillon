@@ -15,7 +15,7 @@ type MemoryStore struct {
 	log *LockItem[memLog]                 // 实现 LogStore
 }
 
-func newMemoryStore() *MemoryStore {
+func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		kv: NewLockItem(map[string]interface{}{}),
 		log: NewLockItem(memLog{
@@ -48,7 +48,7 @@ func (m *MemoryStore) Get(key []byte) (val []byte, err error) {
 	if ok {
 		return v.([]byte), nil
 	}
-	return nil, ErrKeyNotFound
+	return nil, ErrNotFound
 }
 
 func (m *MemoryStore) Set(key []byte, val []byte) (err error) {
@@ -85,7 +85,7 @@ func (m *MemoryStore) GetUint64(key []byte) (uint64, error) {
 	if ok {
 		return v.(uint64), nil
 	}
-	return 0, ErrKeyNotFound
+	return 0, ErrNotFound
 }
 func (m *MemoryStore) FirstIndex() (uint64, error) {
 	var idx uint64
@@ -110,7 +110,7 @@ func (m *MemoryStore) GetLog(index uint64) (log *LogEntry, err error) {
 		if ok {
 			log = deepcopy.Copy(l).(*LogEntry)
 		} else {
-			err = ErrNotFoundLog
+			err = ErrNotFound
 		}
 	})
 	return

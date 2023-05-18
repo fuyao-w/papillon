@@ -11,14 +11,14 @@ type logHash struct {
 	lastHash []byte
 }
 
-type kvSchema [2]string
+type KvSchema [2]string
 
-func (s kvSchema) encode(k, v string) []byte {
+func (s KvSchema) Encode(k, v string) []byte {
 	s[0], s[1] = k, v
 	b, _ := json.Marshal(s)
 	return b
 }
-func (s kvSchema) decode(data []byte) (k, v string) {
+func (s KvSchema) decode(data []byte) (k, v string) {
 	_ = json.Unmarshal(data, &s)
 	return s[0], s[1]
 }
@@ -41,7 +41,7 @@ func (m *memFSM) StoreConfiguration(index uint64, configuration ClusterInfo) {
 	m.configurations = append(m.configurations, configuration)
 }
 
-func newMemFSM() *memFSM {
+func NewMemFSM() *memFSM {
 	return &memFSM{
 		kv: NewLockItem(map[string]string{}),
 	}
@@ -91,7 +91,7 @@ func (m *memFSM) Apply(entry *LogEntry) interface{} {
 	m.lastTerm = entry.Term
 	m.lastIndex = entry.Index
 	m.Add(entry.Data)
-	if k, v := kvSchema.decode(kvSchema{}, entry.Data); len(k) > 0 {
+	if k, v := KvSchema.decode(KvSchema{}, entry.Data); len(k) > 0 {
 		m.kv.Action(func(t *map[string]string) {
 			(*t)[k] = v
 		})

@@ -12,7 +12,7 @@ type memSnapshot struct {
 	sync.Mutex
 }
 
-func newMemSnapShot() *memSnapshot {
+func NewMemSnapShot() *memSnapshot {
 	return &memSnapshot{}
 }
 

@@ -20,7 +20,7 @@ type memRPC struct {
 	fastPath   fastPath
 }
 
-func newMemRpc(localAddr string) *memRPC {
+func NewMemRpc(localAddr string) *memRPC {
 	return &memRPC{
 		localAddr:  ServerAddr(localAddr),
 		consumerCh: make(chan *RPC),

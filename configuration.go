@@ -54,7 +54,7 @@ func DecodeCluster(data []byte) (c ClusterInfo) {
 func EncodeCluster(c ClusterInfo) (data []byte) {
 	data, err := json.Marshal(c)
 	if err != nil {
-		panic(fmt.Errorf("failed to encode ClusterInfo :%s", err))
+		panic(fmt.Errorf("failed to Encode ClusterInfo :%s", err))
 	}
 	return
 }

@@ -5,10 +5,9 @@ import (
 )
 
 var (
-	ErrKeyNotFound = customError{"key not found"}
-	ErrKeyIsNil    = customError{"key is nil"}
-	ErrValueIsNil  = customError{"value is nil"}
-	ErrRange       = customError{"from must no bigger than to"}
+	ErrKeyIsNil   = customError{"key is nil"}
+	ErrValueIsNil = customError{"value is nil"}
+	ErrRange      = customError{"from must no bigger than to"}
 )
 
 type (
