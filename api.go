@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+const (
+	backoffBaseDuration = time.Millisecond * 10
+	maxBackoffRounds    = 10
+)
+
 var (
 	ErrNotExist                        = errors.New("not exist")
 	ErrPipelineReplicationNotSupported = errors.New("pipeline replication not supported")
@@ -27,6 +32,7 @@ var (
 	ErrLeadershipLost         = errors.New("leadership lost")
 	ErrNothingNewToSnapshot   = errors.New("nothing new to snapshot")
 	ErrEmptyCommit            = errors.New("empty commit")
+	ErrPrevLogNotMatch        = errors.New("prev log term not match")
 )
 
 func genTimeoutCh(timeout time.Duration) (tm <-chan time.Time) {

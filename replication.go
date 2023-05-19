@@ -3,6 +3,7 @@ package papillon
 import (
 	"errors"
 	. "github.com/fuyao-w/common-util"
+	"math"
 	"sync/atomic"
 	"time"
 )
@@ -10,6 +11,7 @@ import (
 type (
 	// replication 领导人复制时每个跟随者维护的上下文状态
 	replication struct {
+		failures                           int                                   // Raft.replicateTo 支持退避重试，放到这里用于只支持短连接情况
 		peer                               *LockItem[ServerInfo]                 // 跟随者的 server 信息
 		nextIndex                          *atomic.Uint64                        // 待复制给跟随者的下一条日志索引，初始化为领导人最新的日志索引
 		heartBeatStop, heartBeatDone, done chan struct{}                         // 心跳停止、复制线程结束、pipeline 返回结果处理线程结束
@@ -54,23 +56,38 @@ func (fr *replication) getLastContact() time.Time {
 	return fr.lastContact.Get()
 }
 
-// heartBeat 想跟随者发起心跳，跟随 replicate 关闭
-func (r *Raft) heartBeat(fr *replication) {
+// heartbeat 想跟随者发起心跳，跟随 replicate 关闭
+func (r *Raft) heartbeat(fr *replication) {
 	var (
-		ticker = time.NewTicker(Max(r.Conf().HeartbeatTimeout/10, minHeartBeatInterval))
+		req = &AppendEntryRequest{
+			RPCHeader: r.buildRPCHeader(),
+			Term:      r.getCurrentTerm(),
+		}
+		failures int
 	)
-	defer func() {
-		ticker.Stop()
-		close(fr.heartBeatDone)
-	}()
+	defer close(fr.heartBeatDone)
 	for {
 		select {
 		case <-fr.heartBeatStop:
 			return
-		case <-ticker.C:
+		case <-randomTimeout(r.Conf().HeartbeatTimeout / 10):
 		case <-fr.notifyCh:
 		}
-		r.replicateTo(fr, 0)
+		resp, err := r.rpc.AppendEntries(Ptr(fr.peer.Get()), req)
+		if err != nil {
+			failures++
+			select {
+			case <-time.After(exponentialBackoff(backoffBaseDuration, r.Conf().HeartbeatTimeout, failures, maxBackoffRounds)):
+			case <-fr.heartBeatStop:
+				return
+			}
+			r.logger.Errorf("AppendEntries :%s", err)
+			continue
+		}
+		failures = 0
+		fr.setLastContact()
+		// 由于我们没有追加日志与校验 prev log， 所以 resp.Success 结果只会受任期校验影响，true 或者 false 都是 VerifyLeader 请求可信的
+		fr.notifyAll(resp.Success)
 	}
 }
 
@@ -145,9 +162,16 @@ func (r *Raft) replicateTo(fr *replication, latestIndex uint64) (stop bool) {
 		}
 		resp, err := r.rpc.AppendEntries(Ptr(fr.peer.Get()), req)
 		if err != nil {
+			fr.failures++
+			select {
+			case <-fr.stop:
+				return true
+			case <-time.After(exponentialBackoff(backoffBaseDuration, time.Minute, fr.failures, math.MaxInt)):
+			}
 			r.logger.Errorf("AppendEntries :%s", err)
 			return
 		}
+		fr.failures = 0
 		if resp.Term > r.getCurrentTerm() {
 			r.leaderLease(fr)
 			r.logger.Info("replicate to leader Lease", fr.peer.Get().ID)
@@ -155,10 +179,10 @@ func (r *Raft) replicateTo(fr *replication, latestIndex uint64) (stop bool) {
 		}
 		fr.setLastContact()
 		if len(req.Entries) > 0 {
-			//r.logger.Debug("replicate to id:", fr.peer.Get().ID, ",latestIndex:", latestIndex, ",result:", resp.Succ,
+			//r.logger.Debug("replicate to id:", fr.peer.Get().ID, ",latestIndex:", latestIndex, ",result:", resp.Success,
 			//	",peer latest index", resp.LatestIndex)
 		}
-		if resp.Succ {
+		if resp.Success {
 			r.updateLatestCommit(fr, req.Entries)
 			fr.allowPipeline = true
 		} else {
@@ -194,7 +218,7 @@ func (r *Raft) processPipelineResult(fr *replication, pipeline AppendEntryPipeli
 				return
 			}
 			fr.setLastContact()
-			if resp.Succ {
+			if resp.Success {
 				r.updateLatestCommit(fr, fu.Request().Entries)
 			} else {
 				fr.setNextIndex(clacNextIndex(fr.getNextIndex(), resp.LatestIndex))
@@ -206,22 +230,25 @@ func (r *Raft) processPipelineResult(fr *replication, pipeline AppendEntryPipeli
 }
 
 // pipelineReplicateTo 执行长链接复制
-// TODO 如果 pipeline 发送速度比响应速度更快，会出现跟随者校验 prev log index 失败的现象( nextIndex 连续递增 到 10 ，跟随者才把 5 复制完 ，然后心跳发送了 prev index 为 10 的请求)，此处需要实现一个失败退避机制
-func (r *Raft) pipelineReplicateTo(fr *replication, pipeline AppendEntryPipeline) (stop bool) {
+// 如果 pipeline 发送速度比响应速度更快，会出现跟随者校验 prev log index 失败的现象
+// (nextIndex 连续递增到 10 ，跟随者才把 5 复制完 ，然后心跳发送了 prev index 为 10 的请求)
+// 这个问题对心跳和复制没有实质影响，所以在 checkPrevLog 判断 req.PrevLogIndex > latestIndex 直接返回。避免无意义的磁盘 IO 即可
+func (r *Raft) pipelineReplicateTo(fr *replication, pipeline AppendEntryPipeline) (stop, hasMore bool) {
 	req, err := r.buildAppendEntryReq(fr.getNextIndex(), r.getLatestIndex())
 	if err != nil {
 		r.logger.Errorf("pipelineReplicateTo|buildAppendEntryReq err:%s ,next index:%d  ,latest index :%d ,%s", err, fr.getNextIndex(), r.getLatestIndex(), fr.peer.Get().ID)
-		return true
+		return true, false
 	}
 	_, err = pipeline.AppendEntries(req)
 	if err != nil {
 		r.logger.Errorf("pipelineReplicateTo|AppendEntries err:%s", err)
-		return true
+		return true, false
 	}
 	// 因为请求结果在 processPipelineResult 函数线程异步接收，这里需要立即更新 nextIndex 防止重复发送
 	if n := len(req.Entries); n > 0 {
 		fr.setNextIndex(req.Entries[n-1].Index + 1)
 		r.logger.Debug("setNextIndex ", fr.getNextIndex(), fr.peer.Get().ID)
+		return false, r.getLatestIndex()-fr.getNextIndex() > 0
 	}
 	return
 }
@@ -230,7 +257,9 @@ func (r *Raft) pipelineReplicateTo(fr *replication, pipeline AppendEntryPipeline
 func (r *Raft) pipelineReplicateHelper(fr *replication) {
 	var (
 		finishCh, pipelineStopCh = make(chan struct{}), make(chan struct{})
-		ticker                   = time.NewTicker(r.Conf().CommitTimeout)
+		hasMore                  bool
+		timeout                  = r.Conf().CommitTimeout
+		ticker                   = time.NewTimer(timeout)
 	)
 	defer ticker.Stop()
 	fr.allowPipeline = false
@@ -254,9 +283,15 @@ func (r *Raft) pipelineReplicateHelper(fr *replication) {
 			}
 			stop = true
 		case <-ticker.C: // trigger 有几率丢失通知(如果 rpc 延迟过大，可能会略过最新的通知)，所以通过定时任务作为补充
-			stop = r.pipelineReplicateTo(fr, pipeline)
+			stop, hasMore = r.pipelineReplicateTo(fr, pipeline)
+			if hasMore { // 加速追赶
+				ticker.Reset(0)
+			} else {
+				ticker.Reset(timeout)
+			}
 		case fu := <-fr.trigger:
-			if stop = r.pipelineReplicateTo(fr, pipeline); fu != nil {
+			stop, _ = r.pipelineReplicateTo(fr, pipeline)
+			if fu != nil {
 				if stop {
 					fu.fail(errors.New("replication failed"))
 				} else {
@@ -308,13 +343,12 @@ func (r *Raft) replicateHelper(fr *replication) (stop bool) {
 			stop = r.replicateTo(fr, r.getLatestIndex())
 		case fu := <-fr.trigger:
 			stop = r.replicateTo(fr, r.getLatestIndex())
-			if fu == nil {
-				continue
-			}
-			if !stop {
-				fu.success()
-			} else {
-				fu.fail(errors.New("replication failed"))
+			if fu != nil {
+				if !stop {
+					fu.success()
+				} else {
+					fu.fail(errors.New("replication failed"))
+				}
 			}
 		}
 	}

@@ -371,6 +371,9 @@ type netPipeline struct {
 }
 
 func (n *netPipeline) AppendEntries(request *AppendEntryRequest) (AppendEntriesFuture, error) {
+	if n.trans.timeout > 0 {
+		n.conn.c.SetWriteDeadline(time.Now().Add(n.trans.timeout))
+	}
 	af := newAppendEntriesFuture(request)
 	if err := n.trans.sendRpc(n.conn, RpcAppendEntry, af.req); err != nil {
 		return nil, err

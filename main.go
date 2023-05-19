@@ -31,7 +31,7 @@ func NewRaft(conf *Config,
 	if conf.Logger == nil {
 		conf.Logger = log.NewLogger()
 	}
-	logStore = NewCacheLog(logStore, conf.TrailingLogs)
+	//logStore = NewCacheLog(logStore, conf.TrailingLogs)
 	lastIndex, err := logStore.LastIndex()
 	if err != nil {
 		if !errors.Is(ErrNotFound, err) {
@@ -352,36 +352,46 @@ func (r *Raft) saveConfiguration(entry *LogEntry) {
 	r.setLatestConfiguration(entry.Index, DecodeCluster(entry.Data))
 }
 
+// checkPrevLog 校验日志是否匹配
+// 只要有和 prevTerm、prevIndex 匹配的日志就行，不一定是最新的，日志可能会被领导人覆盖，lastIndex 可能回退
+func (r *Raft) checkPrevLog(req *AppendEntryRequest, latestTerm, latestIndex uint64) error {
+	var prevLogTerm uint64
+	switch {
+	case req.PrevLogIndex <= 0: // 第一个日志 PrevLogIndex 为 0
+		return nil
+	case req.PrevLogIndex > latestIndex:
+		return ErrPrevLogNotMatch
+	case req.PrevLogIndex == latestIndex:
+		prevLogTerm = latestTerm
+	default:
+		log, err := r.logStore.GetLog(req.PrevLogIndex)
+		if err != nil {
+			if errors.Is(ErrNotFound, err) {
+				r.logger.Errorf("not found prev log ,idx : %d ,id : %s", req.PrevLogIndex, r.localInfo.ID)
+			}
+			return err
+		}
+		prevLogTerm = log.Term
+	}
+	if prevLogTerm != req.PrevLogTerm {
+		r.logger.Error("storeEntries|prev log term not match :", prevLogTerm, req.PrevLogTerm)
+		return ErrPrevLogNotMatch
+	}
+	return nil
+}
+
 // storeEntries 持久化日志，需要校验 PrevLogIndex、PrevLogTerm 是否匹配
 func (r *Raft) storeEntries(req *AppendEntryRequest) ([]*LogEntry, error) {
 	var (
 		newEntries              []*LogEntry
 		latestTerm, latestIndex = r.getLatestEntry()
 	)
-	r.logger.Debug("storeEntries ", req.ID, req.PrevLogIndex)
-	// 校验日志是否匹配
-	// 只要有和 prevTerm、prevIndex 匹配的日志就行，不一定是最新的，日志可能会被领导人覆盖，lastIndex 可能回退
-	if req.PrevLogIndex > 0 { // 第一个日志 PrevLogIndex 为 0 ，所以这里加判断
-		var prevLogTerm uint64
-		if req.PrevLogIndex == latestIndex {
-			prevLogTerm = latestTerm
-		} else {
-			log, err := r.logStore.GetLog(req.PrevLogIndex)
-			if err != nil {
-				if errors.Is(ErrNotFound, err) {
-					r.logger.Errorf("not found prev log ,idx : %d ,id : %s", req.PrevLogIndex, r.localInfo.ID)
-				}
-				return nil, err
-			}
-			prevLogTerm = log.Term
-
-		}
-		if prevLogTerm != req.PrevLogTerm {
-			r.logger.Error("storeEntries|prev log term not match :", prevLogTerm, req.PrevLogTerm)
-			return nil, errors.New("prev log term not match")
-		}
+	if len(req.Entries) != 0 {
+		r.logger.Debug("storeEntries ", req.ID, req.PrevLogIndex, latestIndex, len(req.Entries))
 	}
-
+	if err := r.checkPrevLog(req, latestTerm, latestIndex); err != nil {
+		return nil, err
+	}
 	for i, entry := range req.Entries {
 		if entry.Index > latestIndex { // 绝对是最新的了
 			newEntries = req.Entries[i:]
@@ -399,15 +409,15 @@ func (r *Raft) storeEntries(req *AppendEntryRequest) ([]*LogEntry, error) {
 			newEntries = req.Entries[i:]
 			break
 		}
+	}
 
+	if len(newEntries) != 0 {
+		if err := r.logStore.SetLogs(newEntries); err != nil {
+			r.logger.Errorf("store log err :%s", err)
+			return nil, err
+		}
 	}
-	if len(newEntries) == 0 {
-		return nil, nil
-	}
-	if err := r.logStore.SetLogs(newEntries); err != nil {
-		r.logger.Errorf("store log err :%s", err)
-		return nil, err
-	}
+
 	return newEntries, nil
 }
 
@@ -415,13 +425,13 @@ func (r *Raft) storeEntries(req *AppendEntryRequest) ([]*LogEntry, error) {
 // 隐含意义就是跟随者的有效日志比领导者的快照旧
 func (r *Raft) processInstallSnapshot(req *InstallSnapshotRequest, rpc *RPC) {
 	var (
-		succ bool
-		meta = req.SnapshotMeta
+		success bool
+		meta    = req.SnapshotMeta
 	)
 	defer func() {
 		rpc.Response <- &InstallSnapshotResponse{
 			RPCHeader: r.buildRPCHeader(),
-			Success:   succ,
+			Success:   success,
 			Term:      r.getCurrentTerm(),
 		}
 		io.Copy(io.Discard, rpc.Reader)
@@ -481,7 +491,7 @@ func (r *Raft) processInstallSnapshot(req *InstallSnapshotRequest, rpc *RPC) {
 	r.setLatestConfiguration(meta.Index, meta.Configuration)
 	r.setLastContact()
 	_ = r.compactLog()
-	succ = true
+	success = true
 }
 
 // compactLog 压缩日志，至少保留 Config.TrailingLogs 长度日志
@@ -507,11 +517,11 @@ func (r *Raft) compactLog() error {
 
 // processFastTimeout 跟随者快速超时成为候选人
 func (r *Raft) processFastTimeout(req *FastTimeoutRequest, rpc *RPC) {
-	var succ bool
+	var success bool
 	defer func() {
 		rpc.Response <- &FastTimeoutResponse{
 			RPCHeader: r.buildRPCHeader(),
-			Success:   succ,
+			Success:   success,
 		}
 	}()
 	if req.Term < r.getCurrentTerm() {
@@ -519,19 +529,19 @@ func (r *Raft) processFastTimeout(req *FastTimeoutRequest, rpc *RPC) {
 	}
 	r.setCandidate()
 	r.candidateFromLeaderTransfer = req.LeaderShipTransfer
-	succ = true
+	success = true
 }
 
 // processAppendEntry 处理日志复制，当日志长度为 0 的时候当做心跳使用
 func (r *Raft) processAppendEntry(req *AppendEntryRequest, rpc *RPC) {
 	var (
-		succ bool
+		success bool
 	)
 	defer func() {
 		rpc.Response <- &AppendEntryResponse{
 			RPCHeader:   r.buildRPCHeader(),
 			Term:        r.getCurrentTerm(),
-			Succ:        succ,
+			Success:     success,
 			LatestIndex: r.getLatestIndex(),
 		}
 	}()
@@ -576,7 +586,7 @@ func (r *Raft) processAppendEntry(req *AppendEntryRequest, rpc *RPC) {
 		// 应用到状态机错误不用返回给 leader
 		r.applyLogToFsm(r.getCommitIndex(), nil)
 	}
-	succ = true
+	success = true
 	r.setLastContact()
 }
 
@@ -879,7 +889,7 @@ func (r *Raft) reloadReplication() {
 		r.leaderState.replicate[server.ID] = fr
 		r.logger.Info("begin replicate", server.ID, nextIndex)
 		r.goFunc(
-			func() { r.heartBeat(fr) },
+			func() { r.heartbeat(fr) },
 			func() { r.replicate(fr) },
 		)
 		// 立即触发心跳，防止领导权检查下台

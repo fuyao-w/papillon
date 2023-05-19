@@ -176,3 +176,12 @@ func (r *countingReader) Read(p []byte) (n int, err error) {
 func (r *countingReader) Count() uint64 {
 	return r.count.Load()
 }
+
+// exponentialBackoff 指数退避
+// https://en.wikipedia.org/wiki/Exponential_backoff
+func exponentialBackoff(base, capped time.Duration, round, max int) time.Duration {
+	y := float64(Max(Min(round, max)-2, 0))
+	x := math.Pow(2, y)
+	base *= time.Duration(x)
+	return Min(base, capped)
+}

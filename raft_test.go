@@ -3,8 +3,6 @@ package papillon
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/boltdb/bolt"
-	dbStore "github.com/fuyao-w/raft-boltdb"
 	"github.com/spf13/cast"
 	"io"
 	"net/http"
@@ -25,12 +23,10 @@ func TestRaft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db1, err := dbStore.NewStore("./example/log_1.log", bolt.DefaultOptions, true)
-	db2, err := dbStore.NewStore("./example/log_2.log", bolt.DefaultOptions, true)
-	db3, err := dbStore.NewStore("./example/log_3.log", bolt.DefaultOptions, true)
-	raft1, _ := buildRaft("1", rpc1, db1)
-	raft2, _ := buildRaft("2", rpc2, db2)
-	raft3, _ := buildRaft("3", rpc3, db3)
+
+	raft1, _ := buildRaft("1", rpc1, nil)
+	raft2, _ := buildRaft("2", rpc2, nil)
+	raft3, _ := buildRaft("3", rpc3, nil)
 	//batchConn(rpc1.(*memRPC), rpc2.(*memRPC), rpc3.(*memRPC))
 	go func() {
 		time.Sleep(time.Second)

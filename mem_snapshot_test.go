@@ -22,7 +22,7 @@ func TestCreate(t *testing.T) {
 			ConfigurationIndex: 11,
 			Size:               0,
 		}
-		snapshot := newMemSnapShot()
+		snapshot := NewMemSnapShot()
 		sink, _ := snapshot.Create(meta.Version, meta.Index, meta.Term, meta.Configuration, meta.ConfigurationIndex, nil)
 		sink.Write(content)
 

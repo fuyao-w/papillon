@@ -18,7 +18,7 @@ type (
 	AppendEntryResponse struct {
 		*RPCHeader
 		Term        uint64
-		Succ        bool
+		Success     bool
 		LatestIndex uint64 // peer 当前保存最新的日志 index ，用于新节点快速定位 nextIndex
 	}
 	// VoteRequest 投票

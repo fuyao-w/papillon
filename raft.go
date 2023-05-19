@@ -211,7 +211,7 @@ func (r *Raft) getLastApply() uint64 {
 func (r *Raft) setLastApply(index uint64) {
 	r.lastApply.Store(index)
 }
-func (l *leaderState) setupLeadershipTransfer(status bool) (succ bool) {
+func (l *leaderState) setupLeadershipTransfer(status bool) (success bool) {
 	old := true
 	if status {
 		old = false
