@@ -22,10 +22,10 @@ type DefaultPackageParser struct{}
 
 var defaultPackageParser = new(DefaultPackageParser)
 
-func (d *DefaultPackageParser) Encode(writer *bufio.Writer, cmdType rpcType, data []byte) (err error) {
+func (d *DefaultPackageParser) Encode(writer *bufio.Writer, rpcType rpcType, data []byte) (err error) {
 	for _, f := range []func() error{
 		func() error { return writer.WriteByte(magic) },                                   // magic
-		func() error { return writer.WriteByte(byte(cmdType)) },                           // 命令类型
+		func() error { return writer.WriteByte(byte(rpcType)) },                           // 命令类型
 		func() error { return binary.Write(writer, binary.BigEndian, uint64(len(data))) }, // 包体长度
 		func() error { _, e := writer.Write(data); return e },                             // 包体
 	} {
@@ -47,7 +47,7 @@ func (d *DefaultPackageParser) Decode(reader *bufio.Reader) (rpcType, []byte, er
 	}
 
 	// 获取命令类型
-	ct, err := reader.ReadByte()
+	rt, err := reader.ReadByte()
 	if err != nil {
 		return 0, nil, err
 	}
@@ -61,5 +61,5 @@ func (d *DefaultPackageParser) Decode(reader *bufio.Reader) (rpcType, []byte, er
 	// 获取包体
 	req := make([]byte, pkgLength)
 	_, err = io.ReadFull(reader, req)
-	return rpcType(ct), req, err
+	return rpcType(rt), req, err
 }

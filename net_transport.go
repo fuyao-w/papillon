@@ -73,12 +73,12 @@ func (n *NetTransport) getServerAddr(info *ServerInfo) ServerAddr {
 	return addr
 }
 
-func (n *NetTransport) sendRpc(conn *netConn, cmdType rpcType, request interface{}) error {
+func (n *NetTransport) sendRpc(conn *netConn, rpcType rpcType, request interface{}) error {
 	data, err := defaultCmdConverter.Serialization(request)
 	if err != nil {
 		return err
 	}
-	if err = defaultPackageParser.Encode(conn.rw.Writer, cmdType, data); err != nil {
+	if err = defaultPackageParser.Encode(conn.rw.Writer, rpcType, data); err != nil {
 		return err
 	}
 	return conn.rw.Flush()
@@ -94,7 +94,7 @@ func (n *NetTransport) recvRpc(conn *netConn, resp interface{}) error {
 	}
 	return nil
 }
-func (n *NetTransport) genericRPC(info *ServerInfo, cmdType rpcType, request, response interface{}) (err error) {
+func (n *NetTransport) genericRPC(info *ServerInfo, rpcType rpcType, request, response interface{}) (err error) {
 	conn, err := n.getConn(info)
 	if err != nil {
 		return err
@@ -106,12 +106,12 @@ func (n *NetTransport) genericRPC(info *ServerInfo, cmdType rpcType, request, re
 		if err != nil {
 			conn.Close()
 			data, _ := json.Marshal(request)
-			n.logger.Infof("genericRPC error : %s , rpcType :%d , req :%s", err, cmdType, data)
+			n.logger.Infof("genericRPC error : %s , rpcType :%d , req :%s", err, rpcType, data)
 		} else {
 			n.connPoll.PutConn(conn)
 		}
 	}()
-	if err = n.sendRpc(conn, cmdType, request); err != nil {
+	if err = n.sendRpc(conn, rpcType, request); err != nil {
 		return
 	}
 
@@ -337,19 +337,19 @@ func (n *NetTransport) handleConn(ctx context.Context, conn *netConn) {
 		case <-ctx.Done():
 			return
 		default:
-			cmdType, data, err := defaultPackageParser.Decode(conn.rw.Reader)
+			rType, data, err := defaultPackageParser.Decode(conn.rw.Reader)
 			if err != nil {
 				if !errors.Is(err, io.EOF) {
 					n.logger.Errorf("processConnection|Decode error : %s\n", err)
 				}
 				return
 			}
-			respData, err := n.processor.Do(cmdType, data, conn.rw)
+			respData, err := n.processor.Do(rType, data, conn.rw)
 			if err != nil {
 				n.logger.Errorf("NetTransport|processor error:%s", err)
 				return
 			}
-			if err = defaultPackageParser.Encode(conn.rw.Writer, cmdType, respData.([]byte)); err != nil {
+			if err = defaultPackageParser.Encode(conn.rw.Writer, rType, respData.([]byte)); err != nil {
 				n.logger.Errorf("NetTransport|Encode errorx:%s", err)
 				return
 			}

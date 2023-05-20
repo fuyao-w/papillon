@@ -230,9 +230,6 @@ func (r *Raft) processPipelineResult(fr *replication, pipeline AppendEntryPipeli
 }
 
 // pipelineReplicateTo 执行长链接复制
-// 如果 pipeline 发送速度比响应速度更快，会出现跟随者校验 prev log index 失败的现象
-// (nextIndex 连续递增到 10 ，跟随者才把 5 复制完 ，然后心跳发送了 prev index 为 10 的请求)
-// 这个问题对心跳和复制没有实质影响，所以在 checkPrevLog 判断 req.PrevLogIndex > latestIndex 直接返回。避免无意义的磁盘 IO 即可
 func (r *Raft) pipelineReplicateTo(fr *replication, pipeline AppendEntryPipeline) (stop, hasMore bool) {
 	req, err := r.buildAppendEntryReq(fr.getNextIndex(), r.getLatestIndex())
 	if err != nil {

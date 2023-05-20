@@ -166,10 +166,10 @@ func (m *memRPC) getPeer(addr ServerAddr) *memRPC {
 func (m *memRPC) Consumer() <-chan *RPC {
 	return m.consumerCh
 }
-func (m *memRPC) doRpc(cmdType rpcType, peer *memRPC, request interface{}, reader io.Reader) (interface{}, error) {
+func (m *memRPC) doRpc(rpcType rpcType, peer *memRPC, request interface{}, reader io.Reader) (interface{}, error) {
 	timeout := m.timeout
 	rpc := &RPC{
-		RpcType:  cmdType,
+		RpcType:  rpcType,
 		Request:  request,
 		Reader:   reader,
 		Response: make(chan interface{}),
@@ -179,7 +179,7 @@ func (m *memRPC) doRpc(cmdType rpcType, peer *memRPC, request interface{}, reade
 	case peer.consumerCh <- rpc:
 		timeout = time.Now().Sub(now)
 	case <-time.After(timeout):
-		if cmdType == RpcAppendEntry {
+		if rpcType == RpcAppendEntry {
 			fmt.Println("time out------")
 		}
 		return nil, errors.New("time out")

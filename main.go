@@ -97,7 +97,7 @@ func NewRaft(conf *Config,
 	if err = raft.recoverCluster(); err != nil {
 		return nil, fmt.Errorf("recover cluster|%s", err)
 	}
-	raft.rpc.SetHeartbeatFastPath(raft.heartBeatFastPath)
+	raft.rpc.SetHeartbeatFastPath(raft.heartbeatFastPath)
 	raft.setFollower()
 	raft.goFunc(raft.runState, raft.runFSM, raft.runSnapshot)
 	raft.debug()
@@ -332,14 +332,17 @@ func (r *Raft) processRPC(rpc *RPC) {
 	}
 }
 
-// heartBeatFastPath 心跳的 fastPath ，不用经过主线程
-func (r *Raft) heartBeatFastPath(rpc *RPC) bool {
-	req, ok := rpc.Request.(*AppendEntryRequest)
-	if rpc.RpcType == RpcAppendEntry && ok && len(req.Entries) > 0 {
-		r.processAppendEntry(req, rpc)
-		return true
+// heartbeatFastPath 心跳的 fastPath ，不用经过主线程
+func (r *Raft) heartbeatFastPath(rpc *RPC) bool {
+	if rpc.RpcType != RpcAppendEntry {
+		return false
 	}
-	return false
+	req := rpc.Request.(*AppendEntryRequest)
+	if !(len(req.Entries) == 0 && req.PrevLogIndex == 0 && req.LeaderCommit == 0) {
+		return false
+	}
+	r.processAppendEntry(req, rpc)
+	return true
 }
 
 // saveConfiguration 从日志里更新集群配置，由于集群变更只允许单次一个节点的变更，所以当有新日志

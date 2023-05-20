@@ -32,15 +32,14 @@ func (d *ServerProcessor) SetFastPath(cb fastPath) {
 func (d *ServerProcessor) Do(typ rpcType, req interface{}, reader io.Reader) (resp interface{}, err error) {
 	resCh := make(chan any, 1)
 	rpc := &RPC{
+		RpcType:  typ,
 		Request:  req,
 		Response: resCh,
 	}
+	if d.fastPath != nil && d.fastPath(rpc) {
+		return <-resCh, nil
+	}
 	switch typ {
-	case RpcAppendEntry:
-		request := req.(*AppendEntryRequest)
-		if len(request.Entries) == 0 && d.fastPath != nil && d.fastPath(rpc) {
-			return <-resCh, nil
-		}
 	case RpcInstallSnapshot:
 		rpc.Reader = io.LimitReader(reader, req.(*InstallSnapshotRequest).SnapshotMeta.Size)
 	}
@@ -73,11 +72,11 @@ func newProcessorProxy(cmdCh chan *RPC, options ...func(opt *processorOption)) P
 	return proxy
 }
 
-func (p *ProcessorProxy) Do(cmdType rpcType, reqBytes interface{}, reader io.Reader) (respBytes interface{}, err error) {
+func (p *ProcessorProxy) Do(rpcType rpcType, reqBytes interface{}, reader io.Reader) (respBytes interface{}, err error) {
 	date := reqBytes.([]byte)
 	var req interface{}
 
-	switch cmdType {
+	switch rpcType {
 	case RpcVoteRequest:
 		req = new(VoteRequest)
 	case RpcAppendEntry:
@@ -93,7 +92,7 @@ func (p *ProcessorProxy) Do(cmdType rpcType, reqBytes interface{}, reader io.Rea
 	if err != nil {
 		return
 	}
-	resp, err := p.Processor.Do(cmdType, req, reader)
+	resp, err := p.Processor.Do(rpcType, req, reader)
 	if err != nil {
 		return nil, err
 	}

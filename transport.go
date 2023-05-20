@@ -53,7 +53,7 @@ type (
 	fastPath func(cb *RPC) bool
 
 	PackageParser interface {
-		Encode(writer *bufio.Writer, cmdType rpcType, data []byte) (err error)
+		Encode(writer *bufio.Writer, rpcType rpcType, data []byte) (err error)
 		Decode(reader *bufio.Reader) (rpcType, []byte, error)
 	}
 
